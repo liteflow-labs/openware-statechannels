@@ -3,7 +3,10 @@
 //
 // When running the script with `npx hardhat run <script>` you'll find the Hardhat
 // Runtime Environment's members available in the global scope.
-const hre = require("hardhat");
+import { ethers } from 'hardhat'
+
+const { NitroAdjudicatorArtifact, TrivialAppArtifact } =
+  require('@statechannels/nitro-protocol').ContractArtifacts
 
 async function main() {
   // Hardhat always runs the compile task when running scripts with its command
@@ -11,15 +14,25 @@ async function main() {
   //
   // If this script is run directly using `node` you may want to call compile
   // manually to make sure everything is compiled
-  // await hre.run('compile');
+  // await run('compile');
 
   // We get the contract to deploy
-  const Greeter = await hre.ethers.getContractFactory("Greeter");
-  const greeter = await Greeter.deploy("Hello, Hardhat!");
+  // const Greeter = await hre.ethers.getContractFactory("Greeter");
+  // const greeter = await Greeter.deploy("Hello, Hardhat!");
 
-  await greeter.deployed();
+  // NitroAdjudicatorArtifact
 
-  console.log("Greeter deployed to:", greeter.address);
+  // SingleAssetPayments
+  const SingleAssetPayments = await ethers.getContractFactory(
+    'SingleAssetPayments',
+  )
+  const singleAssetPayments = await SingleAssetPayments.deploy(
+    'Hello, Hardhat!',
+  )
+
+  await singleAssetPayments.deployed()
+
+  console.log('SingleAssetPayments deployed to:', singleAssetPayments.address)
 }
 
 // We recommend this pattern to be able to use async/await everywhere
@@ -27,6 +40,6 @@ async function main() {
 main()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+    console.error(error)
+    process.exit(1)
+  })
