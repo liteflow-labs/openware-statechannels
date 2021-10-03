@@ -3,10 +3,8 @@
 //
 // When running the script with `npx hardhat run <script>` you'll find the Hardhat
 // Runtime Environment's members available in the global scope.
+import { ContractArtifacts } from '@statechannels/nitro-protocol'
 import { ethers } from 'hardhat'
-
-const { NitroAdjudicatorArtifact, TrivialAppArtifact } =
-  require('@statechannels/nitro-protocol').ContractArtifacts
 
 async function main() {
   // Hardhat always runs the compile task when running scripts with its command
@@ -16,23 +14,28 @@ async function main() {
   // manually to make sure everything is compiled
   // await run('compile');
 
-  // We get the contract to deploy
-  // const Greeter = await hre.ethers.getContractFactory("Greeter");
-  // const greeter = await Greeter.deploy("Hello, Hardhat!");
+  // NitroAdjudicator
+  const NitroAdjudicator = await ethers.getContractFactory(
+    ContractArtifacts.NitroAdjudicatorArtifact.abi,
+    ContractArtifacts.NitroAdjudicatorArtifact.bytecode,
+  )
+  const nitroAdjudicator = await NitroAdjudicator.deploy()
+  await nitroAdjudicator.deployed()
+  console.log('NitroAdjudicator deployed to:', nitroAdjudicator.address)
 
-  // NitroAdjudicatorArtifact
+  // Dummy
+  const Dummy = await ethers.getContractFactory('Dummy')
+  const dummy = await Dummy.deploy()
+  await dummy.deployed()
+  console.log('Dummy deployed to:', dummy.address)
 
   // SingleAssetPayments
-  const SingleAssetPayments = await ethers.getContractFactory(
-    'SingleAssetPayments',
-  )
-  const singleAssetPayments = await SingleAssetPayments.deploy(
-    'Hello, Hardhat!',
-  )
-
-  await singleAssetPayments.deployed()
-
-  console.log('SingleAssetPayments deployed to:', singleAssetPayments.address)
+  // const SingleAssetPayments = await ethers.getContractFactory(
+  //   'SingleAssetPayments',
+  // )
+  // const singleAssetPayments = await SingleAssetPayments.deploy()
+  // await singleAssetPayments.deployed()
+  // console.log('SingleAssetPayments deployed to:', singleAssetPayments.address)
 }
 
 // We recommend this pattern to be able to use async/await everywhere
