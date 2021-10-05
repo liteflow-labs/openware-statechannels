@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "target": "ESNext",
+    "resolveJsonModule": true,
+    "strict": true,
+    "baseUrl": ".",
+  },
+  "exclude": ["node_modules", "dist"]
+}

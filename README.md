@@ -11,3 +11,9 @@ npm run -w packages/contracts hardhat -- node
 ```bash
 npm run -w packages/contracts hardhat -- run ./scripts/deploy.ts --network localhost
 ```
+
+### Run UI
+
+```bash
+npm run -w packages/ui dev
+```
