@@ -5,6 +5,7 @@ import { abi as NitroAdjudicatorContractAbi } from '@statechannels/nitro-protoco
 import { useWeb3React } from '@web3-react/core'
 import Head from 'next/head'
 import { useCallback, useEffect, useMemo } from 'react'
+import { NitroAdjudicator } from '../contracts'
 import useContract from '../hooks/useContract'
 import { injectedConnector } from '../lib/connector'
 
@@ -25,7 +26,7 @@ export default function Home(): JSX.Element {
     if (web3Error) throw web3Error
   }, [web3Error])
 
-  const nitroAdjudicatorContract = useContract(
+  const nitroAdjudicatorContract = useContract<NitroAdjudicator>(
     NitroAdjudicatorContractAddress,
     NitroAdjudicatorContractAbi,
   )
