@@ -1,17 +1,18 @@
+import { BigNumber } from '@ethersproject/bignumber'
 import { AddressZero } from '@ethersproject/constants'
 import { parseUnits } from '@ethersproject/units'
 import { Channel, getChannelId } from '@statechannels/nitro-protocol'
 import { abi as NitroAdjudicatorContractAbi } from '@statechannels/nitro-protocol/lib/artifacts/contracts/NitroAdjudicator.sol/NitroAdjudicator.json'
 import { useWeb3React } from '@web3-react/core'
 import Head from 'next/head'
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NitroAdjudicator } from '../contracts'
 import useContract from '../hooks/useContract'
 import { injectedConnector } from '../lib/connector'
 
 const NitroAdjudicatorContractAddress =
-  '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707'
-const DummyContractAddress = '0x0165878A594ca255338adfa4d48449f69242Eb8F'
+  '0x5FbDB2315678afecb367f032d93F642f64180aa3'
+const DummyContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
 
 export default function Home(): JSX.Element {
   const {
@@ -40,7 +41,18 @@ export default function Home(): JSX.Element {
       participants: [account],
     }
     return getChannelId(channel)
-  }, [chainId, account])
+  }, [account, chainId])
+
+  const [holdings, setHoldings] = useState<BigNumber>()
+  const fetchHoldings = useCallback(() => {
+    if (!nitroAdjudicatorContract) return
+    if (!channelId) return
+    nitroAdjudicatorContract
+      .holdings(AddressZero, channelId)
+      .then(setHoldings)
+      .catch(console.error)
+  }, [channelId, nitroAdjudicatorContract])
+  useEffect(() => fetchHoldings(), [fetchHoldings])
 
   const deposit = useCallback(async () => {
     if (!nitroAdjudicatorContract)
@@ -91,6 +103,16 @@ export default function Home(): JSX.Element {
         {account && (
           <div>
             <h2>Deposit</h2>
+            <p>
+              Holdings: {holdings?.toString()}{' '}
+              <button
+                type="button"
+                onClick={() => fetchHoldings()}
+                style={{ cursor: 'pointer' }}
+              >
+                Refresh
+              </button>
+            </p>
             <button
               type="button"
               onClick={() => deposit()}
