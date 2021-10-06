@@ -27,11 +27,12 @@ import { injectedConnector } from '../lib/connector'
 
 const NitroAdjudicatorContractAddress =
   '0x5FbDB2315678afecb367f032d93F642f64180aa3'
-// const DummyContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
+const DummyContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
 
 type StateAction =
   | { type: 'reset'; channel: Channel }
   | { type: 'deposit'; asset: Address; amount: BigNumber; destination: string }
+  | { type: 'withdraw'; asset: Address; destination: string }
   | {
       type: 'transfer'
       asset: Address
@@ -91,6 +92,32 @@ export default function Home(): JSX.Element {
     })
   }, [channel])
 
+  const validTransition = useCallback(
+    async (previousState: State, newState: State) => {
+      if (!nitroAdjudicatorContract)
+        throw new Error('nitroAdjudicatorContract is falsy')
+      const isValidTransition = await nitroAdjudicatorContract.validTransition(
+        newState.channel.participants.length,
+        [false, false],
+        [
+          {
+            outcome: hashOutcome(previousState.outcome),
+            appData: previousState.appData,
+          },
+          {
+            outcome: hashOutcome(newState.outcome),
+            appData: newState.appData,
+          },
+        ],
+        newState.turnNum,
+        newState.appDefinition,
+      )
+      if (!isValidTransition) throw new Error('transition is not valid')
+      console.log('transition is valid')
+    },
+    [nitroAdjudicatorContract],
+  )
+
   const [state, dispatch] = useReducer(
     (state: State, action: StateAction): State => {
       switch (action.type) {
@@ -113,13 +140,14 @@ export default function Home(): JSX.Element {
                   })),
                 },
               ],
-              appDefinition: AddressZero,
+              appDefinition: DummyContractAddress,
               appData: HashZero,
               challengeDuration: 86400, // 1 day
               turnNum: 0,
             },
           )
         }
+
         case 'deposit': {
           const asset = state.outcome.find(
             (assetOutcome) => assetOutcome.asset === action.asset,
@@ -141,7 +169,27 @@ export default function Home(): JSX.Element {
           return Object.assign({}, state)
         }
 
+        case 'withdraw': {
+          const asset = state.outcome.find(
+            (assetOutcome) => assetOutcome.asset === action.asset,
+          ) as AllocationAssetOutcome | undefined
+          if (!asset) throw new Error('asset not found')
+
+          // find right allocationItem
+          const destination = hexZeroPad(action.destination, 32)
+          const allocationItem = asset.allocationItems.find(
+            (item) => item.destination === destination,
+          )
+          if (!allocationItem) throw new Error('allocationItem not found')
+
+          // do the update of balance
+          allocationItem.amount = '0'
+
+          return Object.assign({}, state)
+        }
+
         case 'transfer': {
+          const previousState = Object.assign({}, state)
           const asset = state.outcome.find(
             (assetOutcome) => assetOutcome.asset === action.asset,
           ) as AllocationAssetOutcome | undefined
@@ -173,30 +221,35 @@ export default function Home(): JSX.Element {
           // increase turn number
           state.turnNum++
 
+          // check if transition is valid
+          void validTransition(previousState, state)
+
           return Object.assign({}, state)
         }
       }
     },
-    {
-      isFinal: false,
-      channel: {} as Channel, // dirty
-      outcome: [
-        {
-          asset: MAGIC_ADDRESS_INDICATING_ETH,
-          allocationItems: [],
-        },
-      ],
-      appDefinition: AddressZero,
-      appData: HashZero,
-      challengeDuration: 86400, // 1 day
-      turnNum: 0,
-    },
+    {} as State, // dirty hack
   )
 
   const channelId = useMemo(() => {
     if (!channel) return
     return getChannelId(channel)
   }, [channel])
+
+  const [status, setStatus] = useState<
+    | {
+        turnNumRecord: number
+        finalizesAt: number
+        fingerprint: BigNumber
+      }
+    | undefined
+  >()
+  const fetchStatus = useCallback(() => {
+    if (!nitroAdjudicatorContract) return
+    if (!channelId) return
+    void nitroAdjudicatorContract.unpackStatus(channelId).then(setStatus)
+  }, [channelId, nitroAdjudicatorContract])
+  useEffect(() => fetchStatus(), [fetchStatus])
 
   const [holdings, setHoldings] = useState<BigNumber>()
   const fetchHoldings = useCallback(() => {
@@ -316,7 +369,6 @@ export default function Home(): JSX.Element {
     const signer = library.getSigner(account)
     const outcomeBytes = encodeOutcome(state.outcome)
     const assetIndex = 0 // implies we are paying out the 0th asset
-    // const stateHash = hashState(state)
     const stateHash = HashZero // if the channel was concluded on the happy path, we can use this default value
     const indices: BigNumberish[] = [] // this magic value (a zero length array) implies we want to pay out all of the allocationItems
     const withdrawTx = await nitroAdjudicatorContract
@@ -325,6 +377,11 @@ export default function Home(): JSX.Element {
     console.log('waiting for withdraw tx', withdrawTx.hash)
     await withdrawTx.wait()
     console.log('withdraw tx is done')
+    dispatch({
+      type: 'withdraw',
+      asset: MAGIC_ADDRESS_INDICATING_ETH,
+      destination: account,
+    })
     fetchHoldings()
     fetchBalance()
   }, [
@@ -380,6 +437,26 @@ export default function Home(): JSX.Element {
             <p>Id: {channelId}</p>
             <p>State:</p>
             <pre>{JSON.stringify(state, null, 4)}</pre>
+            <p>
+              OnChain Status:
+              <br />
+              turnNumRecord: {status?.turnNumRecord || '-'}
+              <br />
+              finalizesAt:{' '}
+              {status?.finalizesAt
+                ? new Date(status?.finalizesAt * 1000).toLocaleString()
+                : '-'}
+              <br />
+              fingerprint: {status?.fingerprint.toString() || '-'}
+              <br />
+              <button
+                type="button"
+                onClick={() => fetchStatus()}
+                style={{ cursor: 'pointer' }}
+              >
+                Refresh
+              </button>
+            </p>
             <p>
               The channel currently holds: {formatUnits(holdings || '0')}{' '}
               <button
