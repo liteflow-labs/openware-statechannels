@@ -4,7 +4,6 @@
 // sign using custom signature functions without access to private key
 //
 
-import { arrayify, splitSignature } from '@ethersproject/bytes'
 import { AddressZero, HashZero } from '@ethersproject/constants'
 import {
   Channel,
@@ -12,11 +11,11 @@ import {
   getFixedPart,
   hashAppPart,
   hashOutcome,
-  hashState,
   State,
 } from '@statechannels/nitro-protocol'
 import { ethers } from 'hardhat'
 import { NitroAdjudicator } from '../types'
+import { signStateWithSigner } from './utils'
 
 async function main() {
   // Deploying smart contract
@@ -65,13 +64,8 @@ async function main() {
   // Generate a finalization proof
   console.log('Signing...')
   const whoSignedWhat = [1, 1, 1] // everyone sign the last state (index is 1)
-  const stateHashes = states.map((s) => hashState(s))
   const signatures = await Promise.all(
-    signers.map(async (s, i) => {
-      return splitSignature(
-        await s.signMessage(arrayify(stateHashes[whoSignedWhat[i]])),
-      )
-    }),
+    signers.map((s, i) => signStateWithSigner(states[whoSignedWhat[i]], s)),
   )
 
   // Call conclude

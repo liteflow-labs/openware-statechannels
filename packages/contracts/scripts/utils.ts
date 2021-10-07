@@ -1,8 +1,12 @@
+import { Signer } from '@ethersproject/abstract-signer'
+import { arrayify, splitSignature } from '@ethersproject/bytes'
 import {
   Channel,
   ChannelMode,
   getChannelId,
   getChannelMode,
+  hashState,
+  State,
 } from '@statechannels/nitro-protocol'
 import { NitroAdjudicator } from '../types'
 
@@ -17,4 +21,8 @@ export async function fetchChannelMode(
 
 export async function wait(delayMs: number) {
   return new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
+export async function signStateWithSigner(state: State, signer: Signer) {
+  return splitSignature(await signer.signMessage(arrayify(hashState(state))))
 }
