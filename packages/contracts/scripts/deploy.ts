@@ -23,11 +23,11 @@ async function main() {
   await nitroAdjudicator.deployed()
   console.log('NitroAdjudicator deployed to:', nitroAdjudicator.address)
 
-  // Dummy
-  const Dummy = await ethers.getContractFactory('Dummy')
-  const dummy = await Dummy.deploy()
-  await dummy.deployed()
-  console.log('Dummy deployed to:', dummy.address)
+  // TrivialApp
+  const TrivialApp = await ethers.getContractFactory('TrivialApp')
+  const trivialApp = await TrivialApp.deploy()
+  await trivialApp.deployed()
+  console.log('TrivialApp deployed to:', trivialApp.address)
 
   // SingleAssetPayments
   // const SingleAssetPayments = await ethers.getContractFactory(

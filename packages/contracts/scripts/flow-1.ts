@@ -1,8 +1,8 @@
-// We require the Hardhat Runtime Environment explicitly here. This is optional
-// but useful for running the script in a standalone fashion through `node <script>`.
 //
-// When running the script with `npx hardhat run <script>` you'll find the Hardhat
-// Runtime Environment's members available in the global scope.
+// Flow 1
+// All participants sign the last finale state
+//
+
 import { AddressZero, HashZero } from '@ethersproject/constants'
 import { Wallet } from '@ethersproject/wallet'
 import {
@@ -16,9 +16,6 @@ import {
 } from '@statechannels/nitro-protocol'
 import { ethers } from 'hardhat'
 import { NitroAdjudicator } from '../types'
-
-// const _PKS = ['']
-// const wallets = _PKS.map((pk) => new Wallet(pk))
 
 const wallets = [
   Wallet.fromMnemonic(
@@ -38,15 +35,8 @@ const participants = wallets.map((wallet) => wallet.address)
 console.log('Participants', participants.join(', '))
 
 async function main() {
-  // Hardhat always runs the compile task when running scripts with its command
-  // line interface.
-  //
-  // If this script is run directly using `node` you may want to call compile
-  // manually to make sure everything is compiled
-  // await run('compile');
-
   // Deploying smart contract
-  console.log('Deploying smart contracts')
+  console.log('Deploying smart contracts...')
 
   // NitroAdjudicator
   const NitroAdjudicator = await ethers.getContractFactory(
@@ -55,13 +45,6 @@ async function main() {
   )
   const nitroAdjudicator = (await NitroAdjudicator.deploy()) as NitroAdjudicator
   await nitroAdjudicator.deployed()
-
-  // Dummy
-  const Dummy = await ethers.getContractFactory('Dummy')
-  const dummy = await Dummy.deploy()
-  await dummy.deployed()
-
-  console.log('Smart contracts deployed')
 
   // Construct a final state
   const chainId = (await ethers.provider.getNetwork()).chainId.toString()
@@ -81,7 +64,7 @@ async function main() {
   // Generate a finalization proof
   console.log('Signing...')
   const whoSignedWhat = [0, 0, 0]
-  const sigs = await signStates([state], wallets, whoSignedWhat)
+  const signatures = await signStates([state], wallets, whoSignedWhat)
 
   // Call conclude
   console.log('Concluding...')
@@ -96,13 +79,11 @@ async function main() {
     outcomeHash,
     numStates,
     whoSignedWhat,
-    sigs,
+    signatures,
   )
   await tx.wait()
 }
 
-// We recommend this pattern to be able to use async/await everywhere
-// and properly handle errors.
 main()
   .then(() => {
     console.log('Done')
