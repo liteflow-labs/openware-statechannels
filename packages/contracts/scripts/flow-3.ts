@@ -63,7 +63,7 @@ async function main() {
       appDefinition: trivialApp.address,
       appData: HashZero,
       challengeDuration: 2,
-      turnNum: 3,
+      turnNum: 4, // state of participant #2
     },
     {
       isFinal: false,
@@ -72,7 +72,7 @@ async function main() {
       appDefinition: trivialApp.address,
       appData: HashZero,
       challengeDuration: 2,
-      turnNum: 4,
+      turnNum: 5, // state of participant #3
     },
     {
       isFinal: false,
@@ -81,7 +81,7 @@ async function main() {
       appDefinition: trivialApp.address,
       appData: HashZero,
       challengeDuration: 2,
-      turnNum: 5,
+      turnNum: 6, // state of participant #1
     },
   ]
 
@@ -91,7 +91,7 @@ async function main() {
 
   // Generate a finalization proof
   console.log('Signing...')
-  const whoSignedWhat = [0, 1, 2] // states index must be equal or increase. the order if forced. at least one must sign last state. each signer MUST signs their dedicated state (turnNum) or one after
+  const whoSignedWhat = [2, 0, 1] // at least one must sign last state. each signer MUST signs their dedicated state (turnNum) or one after
   const signatures = await signStates(states, wallets, whoSignedWhat)
 
   // challenger, sign last state (which it didn't sign in the previous signatures)
