@@ -1,7 +1,6 @@
 //
-// Flow 2
-// 2 states. all participants sign the last one
-// sign using custom signature functions without access to private key
+// Flow 2 bis
+// Same as 2 but without private keys
 //
 
 import { AddressZero, HashZero } from '@ethersproject/constants'
