@@ -55,6 +55,12 @@ export default function Home(): JSX.Element {
     library,
   } = useWeb3React<JsonRpcProvider>()
 
+  const signer = useMemo(() => {
+    if (!library) return
+    if (!account) return
+    return library.getSigner(account)
+  }, [library, account])
+
   useEffect(() => {
     if (web3Error) throw web3Error
   }, [web3Error])
@@ -270,8 +276,8 @@ export default function Home(): JSX.Element {
     if (!account) throw new Error('account is falsy')
     if (!library) throw new Error('library is falsy')
     if (!holdings) throw new Error('holdings is falsy')
+    if (!signer) throw new Error('signer is falsy')
 
-    const signer = library.getSigner(account)
     const amount = parseUnits('1', 'ether')
     const expectedHeld = holdings
     console.log('creating deposit tx')
@@ -297,6 +303,7 @@ export default function Home(): JSX.Element {
     account,
     library,
     holdings,
+    signer,
     fetchHoldings,
     fetchBalance,
   ])
@@ -306,11 +313,11 @@ export default function Home(): JSX.Element {
     if (!account) throw new Error('account is falsy')
     if (!library) throw new Error('library is falsy')
     if (!state) throw new Error('state is falsy')
+    if (!signer) throw new Error('signer is falsy')
 
-    const signer = library.getSigner(account)
     const hashedState = hashState(state)
     return signer.signMessage(arrayify(hashedState))
-  }, [account, channel, library, state])
+  }, [account, channel, library, signer, state])
 
   const conclude = useCallback(async () => {
     if (!channel) throw new Error('channel is falsy')
@@ -319,6 +326,7 @@ export default function Home(): JSX.Element {
     if (!account) throw new Error('account is falsy')
     if (!library) throw new Error('library is falsy')
     if (!state) throw new Error('state is falsy')
+    if (!signer) throw new Error('signer is falsy')
 
     const largestTurnNum = state.turnNum
     const numStates = 1
@@ -340,7 +348,6 @@ export default function Home(): JSX.Element {
     })
 
     // conclude
-    const signer = library.getSigner(account)
     const fixedPart = getFixedPart(state)
     const appPartHash = hashAppPart(state)
     const outcomeHash = hashOutcome(state.outcome)
@@ -358,7 +365,7 @@ export default function Home(): JSX.Element {
     console.log('waiting for conclude tx', concludeTx.hash)
     await concludeTx.wait()
     console.log('conclude tx is done')
-  }, [account, channel, library, nitroAdjudicatorContract, state])
+  }, [account, channel, library, nitroAdjudicatorContract, signer, state])
 
   const challenge = useCallback(async () => {
     if (!channel) throw new Error('channel is falsy')
@@ -367,6 +374,7 @@ export default function Home(): JSX.Element {
     if (!account) throw new Error('account is falsy')
     if (!library) throw new Error('library is falsy')
     if (!state) throw new Error('state is falsy')
+    if (!signer) throw new Error('signer is falsy')
 
     const largestTurnNum = state.turnNum
     const whoSignedWhat = [0, 1]
@@ -387,7 +395,6 @@ export default function Home(): JSX.Element {
     })
 
     // challenge
-    const signer = library.getSigner(account)
     // const challengeHash = hashChallengeMessage(state)
     // const signingKey = new SigningKey(
     //   '0xdf57089febbacf7ba0bc227dafbffa9fc08a93fdc68e1e42411a14efcf23656e',
@@ -418,7 +425,7 @@ export default function Home(): JSX.Element {
     console.log('waiting for challenge tx', challengeTx.hash)
     await challengeTx.wait()
     console.log('challenge tx is done')
-  }, [account, channel, library, nitroAdjudicatorContract, state])
+  }, [account, channel, library, nitroAdjudicatorContract, signer, state])
 
   const withdraw = useCallback(async () => {
     if (!nitroAdjudicatorContract)
@@ -427,8 +434,8 @@ export default function Home(): JSX.Element {
     if (!library) throw new Error('library is falsy')
     if (!channelId) throw new Error('channelId is falsy')
     if (!state) throw new Error('state is falsy')
+    if (!signer) throw new Error('signer is falsy')
 
-    const signer = library.getSigner(account)
     const outcomeBytes = encodeOutcome(state.outcome)
     const assetIndex = 0 // implies we are paying out the 0th asset
     const stateHash = HashZero // if the channel was concluded on the happy path, we can use this default value
@@ -453,6 +460,7 @@ export default function Home(): JSX.Element {
     fetchHoldings,
     library,
     nitroAdjudicatorContract,
+    signer,
     state,
   ])
 
