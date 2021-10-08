@@ -4,6 +4,7 @@
 //
 
 import { AddressZero, HashZero } from '@ethersproject/constants'
+import { HDNode } from '@ethersproject/hdnode'
 import { Wallet } from '@ethersproject/wallet'
 import {
   Channel,
@@ -19,19 +20,13 @@ import { NitroAdjudicator } from '../types'
 import { assertChannelMode } from './assert'
 import { wait } from './utils'
 
+const hdnode = HDNode.fromMnemonic(
+  'test test test test test test test test test test test junk',
+)
 const wallets = [
-  Wallet.fromMnemonic(
-    'test test test test test test test test test test test junk',
-    "m/44'/60'/0'/0/19",
-  ),
-  Wallet.fromMnemonic(
-    'test test test test test test test test test test test junk',
-    "m/44'/60'/0'/0/18",
-  ),
-  Wallet.fromMnemonic(
-    'test test test test test test test test test test test junk',
-    "m/44'/60'/0'/0/17",
-  ),
+  new Wallet(hdnode.derivePath("m/44'/60'/0'/0/17")),
+  new Wallet(hdnode.derivePath("m/44'/60'/0'/0/18")),
+  new Wallet(hdnode.derivePath("m/44'/60'/0'/0/19")),
 ]
 const participants = wallets.map((wallet) => wallet.address)
 console.log('Participants', participants.join(', '))

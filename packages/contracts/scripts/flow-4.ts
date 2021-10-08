@@ -24,11 +24,10 @@ import { assertChannelMode } from './assert'
 const hdnode = HDNode.fromMnemonic(
   'test test test test test test test test test test test junk',
 )
-
 const wallets = [
-  new Wallet(hdnode.derivePath("m/44'/60'/0'/0/19")),
-  new Wallet(hdnode.derivePath("m/44'/60'/0'/0/18")),
   new Wallet(hdnode.derivePath("m/44'/60'/0'/0/17")),
+  new Wallet(hdnode.derivePath("m/44'/60'/0'/0/18")),
+  new Wallet(hdnode.derivePath("m/44'/60'/0'/0/19")),
 ]
 const participants = wallets.map((wallet) => wallet.address)
 console.log('Participants', participants.join(', '))

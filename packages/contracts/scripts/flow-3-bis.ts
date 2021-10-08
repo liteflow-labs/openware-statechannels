@@ -95,7 +95,7 @@ async function main() {
   const hdnode = HDNode.fromMnemonic(
     'test test test test test test test test test test test junk',
   )
-  const challengerPrivateKey = hdnode.derivePath("m/44'/60'/0'/0/19").privateKey
+  const challengerPrivateKey = hdnode.derivePath("m/44'/60'/0'/0/17").privateKey
   const challengeSignature = signChallengeMessage(
     [
       {
