@@ -27,7 +27,7 @@ import { injectedConnector } from '../lib/connector'
 
 const NitroAdjudicatorContractAddress =
   '0x5FbDB2315678afecb367f032d93F642f64180aa3'
-const DummyContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
+const TrivialAppContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
 
 type StateAction =
   | { type: 'reset'; channel: Channel }
@@ -140,7 +140,7 @@ export default function Home(): JSX.Element {
                   })),
                 },
               ],
-              appDefinition: DummyContractAddress,
+              appDefinition: TrivialAppContractAddress,
               appData: HashZero,
               challengeDuration: 86400, // 1 day
               turnNum: 0,
