@@ -1,5 +1,5 @@
 //
-// Flow 2 bis
+// Flow 2.1
 // Same as 2 but without private keys
 //
 

@@ -1,5 +1,5 @@
 //
-// Flow 4 bis
+// Flow 4.1
 // same as 4 but without private key except for challenge
 //
 

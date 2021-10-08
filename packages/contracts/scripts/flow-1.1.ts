@@ -1,6 +1,6 @@
 //
-// Flow 1
-// All participants sign the last finale state
+// Flow 1.1
+// Same as 1 but without private keys
 //
 
 import { AddressZero, HashZero } from '@ethersproject/constants'

@@ -1,5 +1,5 @@
 //
-// Flow 3 bis
+// Flow 3.1
 // Same as 3 but without private keys (except for challenger)
 //
 

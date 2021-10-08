@@ -1,5 +1,5 @@
 //
-// Flow 5 bis
+// Flow 5.1
 // same as 5 but without private keys except for challenge and respond
 //
 
