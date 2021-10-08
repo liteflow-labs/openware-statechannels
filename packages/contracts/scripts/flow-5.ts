@@ -96,8 +96,7 @@ async function main() {
     const signatures = await signStates(states, wallets, whoSignedWhat)
 
     // challenger, sign last state (which it didn't sign in the previous signatures)
-    const challengerPrivateKey =
-      hdnode.derivePath("m/44'/60'/0'/0/19").privateKey
+    const challengerPrivateKey = wallets[0].privateKey
     const challengeSignedState: SignedState = signState(
       states[states.length - 1],
       challengerPrivateKey,
