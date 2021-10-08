@@ -1,8 +1,10 @@
 import { BigNumber, BigNumberish } from '@ethersproject/bignumber'
 import { arrayify, hexZeroPad, splitSignature } from '@ethersproject/bytes'
 import { AddressZero, HashZero } from '@ethersproject/constants'
+import { keccak256 } from '@ethersproject/keccak256'
 import { JsonRpcProvider } from '@ethersproject/providers'
 import { formatEther, formatUnits, parseUnits } from '@ethersproject/units'
+import { Wallet } from '@ethersproject/wallet'
 import {
   AllocationAssetOutcome,
   Channel,
@@ -99,6 +101,33 @@ export default function Home(): JSX.Element {
       channel,
     })
   }, [channel])
+
+  const [stateChannelKey, setStateChannelKey] = useState<Wallet>()
+  const generateStateChannelKey = useCallback(async () => {
+    if (!signer) throw new Error('signer is falsy')
+    if (!chainId) throw new Error('chainId is falsy')
+    const signature = await signer._signTypedData(
+      {
+        name: 'OpenWare State Channel',
+        chainId: chainId.toString(),
+        version: '1',
+        verifyingContract: TrivialAppContractAddress,
+      },
+      {
+        Channel: [
+          { name: 'chainId', type: 'uint32' },
+          { name: 'channelNonce', type: 'uint32' },
+          { name: 'appDefinition', type: 'address' },
+        ],
+      },
+      {
+        chainId: chainId.toString(),
+        channelNonce: channelNonce.toString(),
+        appDefinition: TrivialAppContractAddress,
+      },
+    )
+    setStateChannelKey(new Wallet(keccak256(signature)))
+  }, [chainId, channelNonce, signer])
 
   const validTransition = useCallback(
     async (previousState: State, newState: State) => {
@@ -502,6 +531,24 @@ export default function Home(): JSX.Element {
         </div>
 
         {account && (
+          <div>
+            <h2>State Channel Key</h2>
+            <p>
+              {stateChannelKey
+                ? 'State channel key: ' + stateChannelKey.address
+                : 'No state channel key generated'}{' '}
+              <button
+                type="button"
+                onClick={() => generateStateChannelKey()}
+                style={{ cursor: 'pointer' }}
+              >
+                Generate key
+              </button>
+            </p>
+          </div>
+        )}
+
+        {account && stateChannelKey && (
           <div>
             <h2>Channel</h2>
             <p>Id: {channelId}</p>
