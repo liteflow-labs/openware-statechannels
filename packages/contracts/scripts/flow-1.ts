@@ -16,6 +16,8 @@ import {
 } from '@statechannels/nitro-protocol'
 import { ethers } from 'hardhat'
 import { NitroAdjudicator } from '../types'
+import { assertChannelMode } from './assert'
+import { wait } from './utils'
 
 const wallets = [
   Wallet.fromMnemonic(
@@ -82,6 +84,11 @@ async function main() {
     signatures,
   )
   await tx.wait()
+
+  console.log('Waiting 1s...')
+  await wait(1000)
+
+  await assertChannelMode(nitroAdjudicator, channel, 'Finalized')
 }
 
 main()

@@ -19,7 +19,8 @@ import {
 } from '@statechannels/nitro-protocol'
 import { ethers } from 'hardhat'
 import { NitroAdjudicator } from '../types'
-import { fetchChannelMode, wait } from './utils'
+import { assertChannelMode } from './assert'
+import { wait } from './utils'
 
 const hdnode = HDNode.fromMnemonic(
   'test test test test test test test test test test test junk',
@@ -121,17 +122,12 @@ async function main() {
   )
   await tx.wait()
 
-  // check channel status
-  console.log(
-    'Channel status is:',
-    await fetchChannelMode(nitroAdjudicator, channel),
-  )
+  await assertChannelMode(nitroAdjudicator, channel, 'Challenge')
+
   console.log('Waiting 5s...')
   await wait(5000)
-  console.log(
-    'Channel status is:',
-    await fetchChannelMode(nitroAdjudicator, channel),
-  )
+
+  await assertChannelMode(nitroAdjudicator, channel, 'Finalized')
 }
 
 main()

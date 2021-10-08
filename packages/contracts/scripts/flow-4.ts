@@ -19,7 +19,7 @@ import {
 } from '@statechannels/nitro-protocol'
 import { ethers } from 'hardhat'
 import { NitroAdjudicator } from '../types'
-import { fetchChannelMode } from './utils'
+import { assertChannelMode } from './assert'
 
 const hdnode = HDNode.fromMnemonic(
   'test test test test test test test test test test test junk',
@@ -121,11 +121,7 @@ async function main() {
     await tx.wait()
   })()
 
-  // check channel status
-  console.log(
-    'Channel status is:',
-    await fetchChannelMode(nitroAdjudicator, channel),
-  )
+  await assertChannelMode(nitroAdjudicator, channel, 'Challenge')
 
   await (async () => {
     // create a new state
@@ -157,10 +153,7 @@ async function main() {
     await tx.wait()
   })()
 
-  console.log(
-    'Channel status is:',
-    await fetchChannelMode(nitroAdjudicator, channel),
-  )
+  await assertChannelMode(nitroAdjudicator, channel, 'Open')
 }
 
 main()
