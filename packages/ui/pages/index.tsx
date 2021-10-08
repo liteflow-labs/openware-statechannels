@@ -10,6 +10,7 @@ import {
   Channel,
   encodeOutcome,
   getChannelId,
+  getChannelMode,
   getFixedPart,
   getStateSignerAddress,
   getVariablePart,
@@ -28,6 +29,8 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { NitroAdjudicator } from '../contracts'
 import useContract from '../hooks/useContract'
 import { injectedConnector } from '../lib/connector'
+
+// TODO: must implement the ephemeral keys in the participants but keep the real wallet in the outcomes
 
 const NitroAdjudicatorContractAddress =
   '0x5FbDB2315678afecb367f032d93F642f64180aa3'
@@ -81,18 +84,16 @@ export default function Home(): JSX.Element {
   )
 
   const [channelNonce, setChannelNonce] = useState(0)
+  const [participants, setParticipants] = useState<Wallet[]>([])
 
   const channel = useMemo<Channel | undefined>(() => {
     if (!chainId) return
     return {
       chainId: chainId.toString(),
-      channelNonce: channelNonce,
-      participants: [
-        '0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199',
-        '0xdD2FD4581271e230360230F9337D5c0430Bf44C0',
-      ],
+      channelNonce,
+      participants: participants.map((p) => p.address),
     }
-  }, [chainId, channelNonce])
+  }, [chainId, channelNonce, participants])
 
   useEffect(() => {
     if (!channel) return
@@ -102,8 +103,7 @@ export default function Home(): JSX.Element {
     })
   }, [channel])
 
-  const [stateChannelKey, setStateChannelKey] = useState<Wallet>()
-  const generateStateChannelKey = useCallback(async () => {
+  const addNewParticipant = useCallback(async () => {
     if (!signer) throw new Error('signer is falsy')
     if (!chainId) throw new Error('chainId is falsy')
     const signature = await signer._signTypedData(
@@ -126,8 +126,10 @@ export default function Home(): JSX.Element {
         appDefinition: TrivialAppContractAddress,
       },
     )
-    setStateChannelKey(new Wallet(keccak256(signature)))
-  }, [chainId, channelNonce, signer])
+    const newParticipant = new Wallet(keccak256(signature))
+    if (participants.find((p) => p.address === newParticipant.address)) return
+    setParticipants([...participants, newParticipant])
+  }, [chainId, channelNonce, participants, signer])
 
   const validTransition = useCallback(
     async (previousState: State, newState: State) => {
@@ -273,20 +275,18 @@ export default function Home(): JSX.Element {
     return getChannelId(channel)
   }, [channel])
 
-  const [status, setStatus] = useState<
-    | {
-        turnNumRecord: number
-        finalizesAt: number
-        fingerprint: BigNumber
-      }
-    | undefined
-  >()
-  const fetchStatus = useCallback(() => {
+  const [channelMode, setChannelMode] = useState<string>()
+  const fetchChannelMode = useCallback(() => {
     if (!nitroAdjudicatorContract) return
     if (!channelId) return
-    void nitroAdjudicatorContract.unpackStatus(channelId).then(setStatus)
+    void nitroAdjudicatorContract
+      .unpackStatus(channelId)
+      .then((status) =>
+        getChannelMode(status.finalizesAt, Math.floor(Date.now() / 1000)),
+      )
+      .then(setChannelMode)
   }, [channelId, nitroAdjudicatorContract])
-  useEffect(() => fetchStatus(), [fetchStatus])
+  useEffect(() => fetchChannelMode(), [fetchChannelMode])
 
   const [holdings, setHoldings] = useState<BigNumber>()
   const fetchHoldings = useCallback(() => {
@@ -530,50 +530,11 @@ export default function Home(): JSX.Element {
           )}
         </div>
 
-        {account && (
-          <div>
-            <h2>State Channel Key</h2>
-            <p>
-              {stateChannelKey
-                ? 'State channel key: ' + stateChannelKey.address
-                : 'No state channel key generated'}{' '}
-              <button
-                type="button"
-                onClick={() => generateStateChannelKey()}
-                style={{ cursor: 'pointer' }}
-              >
-                Generate key
-              </button>
-            </p>
-          </div>
-        )}
-
-        {account && stateChannelKey && (
+        {account && channel && (
           <div>
             <h2>Channel</h2>
             <p>Id: {channelId}</p>
-            <p>State:</p>
-            <pre>{JSON.stringify(state, null, 4)}</pre>
-            <p>
-              OnChain Status:
-              <br />
-              turnNumRecord: {status?.turnNumRecord || '-'}
-              <br />
-              finalizesAt:{' '}
-              {status?.finalizesAt
-                ? new Date(status?.finalizesAt * 1000).toLocaleString()
-                : '-'}
-              <br />
-              fingerprint: {status?.fingerprint.toString() || '-'}
-              <br />
-              <button
-                type="button"
-                onClick={() => fetchStatus()}
-                style={{ cursor: 'pointer' }}
-              >
-                Refresh
-              </button>
-            </p>
+            <pre>{JSON.stringify(channel, null, 4)}</pre>
             <p>
               The channel currently holds: {formatUnits(holdings || '0')}{' '}
               <button
@@ -586,64 +547,17 @@ export default function Home(): JSX.Element {
             </p>
             <button
               type="button"
+              onClick={() => addNewParticipant()}
+              style={{ cursor: 'pointer' }}
+            >
+              Add a new participant
+            </button>{' '}
+            <button
+              type="button"
               onClick={() => deposit()}
               style={{ cursor: 'pointer' }}
             >
               Deposit
-            </button>{' '}
-            <button
-              type="button"
-              onClick={() => {
-                const other = state.channel.participants.find(
-                  (p) => p !== account,
-                )
-                if (!other) throw new Error('no other participant found')
-                dispatch({
-                  type: 'transfer',
-                  amount: parseUnits('1', 'ether'),
-                  asset: MAGIC_ADDRESS_INDICATING_ETH,
-                  from: account,
-                  to: other,
-                })
-              }}
-              style={{ cursor: 'pointer' }}
-            >
-              Transfer to other
-            </button>{' '}
-            <button
-              type="button"
-              onClick={() => dispatch({ type: 'finalize' })}
-              style={{ cursor: 'pointer' }}
-            >
-              Finalize
-            </button>{' '}
-            <button
-              type="button"
-              onClick={() =>
-                signState().then((signature) =>
-                  console.log(
-                    `signature of state #${state.turnNum} by ${account}`,
-                    signature,
-                  ),
-                )
-              }
-              style={{ cursor: 'pointer' }}
-            >
-              Sign state
-            </button>{' '}
-            <button
-              type="button"
-              onClick={() => conclude()}
-              style={{ cursor: 'pointer' }}
-            >
-              Conclude
-            </button>{' '}
-            <button
-              type="button"
-              onClick={() => challenge()}
-              style={{ cursor: 'pointer' }}
-            >
-              Challenge
             </button>{' '}
             <button
               type="button"
@@ -657,8 +571,84 @@ export default function Home(): JSX.Element {
               onClick={() => setChannelNonce(channelNonce + 1)}
               style={{ cursor: 'pointer' }}
             >
-              Reset
-            </button>{' '}
+              Increase nonce
+            </button>
+          </div>
+        )}
+
+        {account && (
+          <div>
+            <h2>State</h2>
+
+            <pre>{JSON.stringify(state, null, 4)}</pre>
+
+            <p>
+              The state mode is {channelMode}{' '}
+              <button
+                type="button"
+                onClick={() => fetchChannelMode()}
+                style={{ cursor: 'pointer' }}
+              >
+                Refresh
+              </button>
+            </p>
+
+            <p>
+              <button
+                type="button"
+                onClick={() => {
+                  const other = state.channel.participants.find(
+                    (p) => p !== account,
+                  )
+                  if (!other) throw new Error('no other participant found')
+                  dispatch({
+                    type: 'transfer',
+                    amount: parseUnits('1', 'ether'),
+                    asset: MAGIC_ADDRESS_INDICATING_ETH,
+                    from: account,
+                    to: other,
+                  })
+                }}
+                style={{ cursor: 'pointer' }}
+              >
+                Transfer to other
+              </button>{' '}
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'finalize' })}
+                style={{ cursor: 'pointer' }}
+              >
+                Finalize
+              </button>{' '}
+              <button
+                type="button"
+                onClick={() =>
+                  signState().then((signature) =>
+                    console.log(
+                      `signature of state #${state.turnNum} by ${account}`,
+                      signature,
+                    ),
+                  )
+                }
+                style={{ cursor: 'pointer' }}
+              >
+                Sign state
+              </button>{' '}
+              <button
+                type="button"
+                onClick={() => conclude()}
+                style={{ cursor: 'pointer' }}
+              >
+                Conclude
+              </button>{' '}
+              <button
+                type="button"
+                onClick={() => challenge()}
+                style={{ cursor: 'pointer' }}
+              >
+                Challenge
+              </button>
+            </p>
           </div>
         )}
       </main>
