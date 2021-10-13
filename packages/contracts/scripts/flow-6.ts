@@ -112,7 +112,7 @@ async function main() {
     const appPartHash = hashAppPart(state)
     const outcomeBytes = encodeOutcome(state.outcome)
     const tx = await nitroAdjudicator
-      .connect(signers[0])
+      .connect(signers[2]) // can be call by anyone
       .concludeAndTransferAllAssets(
         largestTurnNum,
         fixedPart,
@@ -122,16 +122,6 @@ async function main() {
         whoSignedWhat,
         signatures,
       )
-    // const outcomeHash = hashOutcome(state.outcome)
-    // const tx = await nitroAdjudicator.conclude(
-    //   largestTurnNum,
-    //   fixedPart,
-    //   appPartHash,
-    //   outcomeHash,
-    //   numStates,
-    //   whoSignedWhat,
-    //   signatures,
-    // )
     await tx.wait()
   })()
 
