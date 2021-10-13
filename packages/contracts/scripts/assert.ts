@@ -17,10 +17,15 @@ export async function assertChannelMode(
     )
 }
 
-export async function assertBalance(address: string, expectedBalance: string) {
-  const balance = (await ethers.provider.getBalance(address))
+export async function assertBalance(
+  address: string,
+  expectedBalance: string,
+  exact = false,
+) {
+  let balance = (await ethers.provider.getBalance(address))
     .toString()
     .slice(0, expectedBalance.length)
+  if (!exact) balance = balance.slice(0, expectedBalance.length)
   if (balance !== expectedBalance)
     throw new Error(
       `incorrect balance. got ${balance}. expected ${expectedBalance}`,
