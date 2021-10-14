@@ -37,7 +37,7 @@ const NitroAdjudicatorContractAddress =
 const TrivialAppContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
 
 type StateAction =
-  // | { type: 'reset'; channel: Channel }
+  | { type: 'setChannelNonce'; channelNonce: number }
   | { type: 'setChainId'; chainId: string }
   | { type: 'addParticipant'; address: string; ephemeral: Wallet }
   | { type: 'deposit'; asset: Address; amount: BigNumber; destination: string }
@@ -89,7 +89,11 @@ export default function Home(): JSX.Element {
     NitroAdjudicatorContractAbi,
   )
 
-  // const [channelNonce, setChannelNonce] = useState(0)
+  const [channelNonce, setChannelNonce] = useState(0)
+  useEffect(() => {
+    dispatch({ type: 'setChannelNonce', channelNonce })
+  }, [channelNonce])
+
   const [participants, setParticipants] = useState<
     { ephemeral: Wallet; address: string }[]
   >([])
@@ -128,6 +132,11 @@ export default function Home(): JSX.Element {
       }
 
       switch (action.type) {
+        case 'setChannelNonce': {
+          state.channel.channelNonce = action.channelNonce
+          return Object.assign({}, state)
+        }
+
         case 'setChainId': {
           state.channel.chainId = action.chainId
           return Object.assign({}, state)
