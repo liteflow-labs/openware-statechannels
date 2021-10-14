@@ -1,5 +1,5 @@
 import { BigNumber } from '@ethersproject/bignumber'
-import { hexZeroPad } from '@ethersproject/bytes'
+import { hexZeroPad, Signature } from '@ethersproject/bytes'
 import { AddressZero, HashZero } from '@ethersproject/constants'
 import { keccak256 } from '@ethersproject/keccak256'
 import { JsonRpcProvider } from '@ethersproject/providers'
@@ -16,7 +16,6 @@ import {
   hashAppPart,
   hashOutcome,
   signChallengeMessage,
-  SignedState,
   signState,
   signStates,
   State,
@@ -36,6 +35,10 @@ import { injectedConnector } from '../lib/connector'
 type ChannelWithWallets = Omit<Channel, 'participants'> & {
   accounts: string[] // User's ethereum wallet
   wallets: Wallet[] // Ephemeral wallets
+}
+
+type SignedState = State & {
+  signatures: Signature[]
 }
 
 const NitroAdjudicatorContractAddress =
@@ -62,6 +65,11 @@ type StateAction =
     }
   | {
       type: 'finalize'
+    }
+  | {
+      type: 'signLastState'
+      walletIndex: number
+      wallet: Wallet
     }
 
 export default function Home(): JSX.Element {
@@ -137,15 +145,10 @@ export default function Home(): JSX.Element {
   )
 
   const [states, dispatch] = useReducer(
-    (states: State[], action: StateAction): State[] => {
-      if (states.length > 0 && states[states.length - 1].isFinal) {
-        window.alert('last state is already final')
-        return states
-      }
-
+    (states: SignedState[], action: StateAction): SignedState[] => {
       switch (action.type) {
         case 'init': {
-          const newState: State = {
+          const newState: SignedState = {
             isFinal: false,
             channel: {
               channelNonce: action.channel.channelNonce,
@@ -165,14 +168,31 @@ export default function Home(): JSX.Element {
             appData: HashZero,
             challengeDuration: 30,
             turnNum: 0,
+            signatures: [],
           }
           return Object.assign([], [newState])
+        }
+
+        case 'signLastState': {
+          if (!states.length) throw new Error('no states')
+          const previousState = states[states.length - 1]
+
+          const signedState = signState(previousState, action.wallet.privateKey)
+          previousState.signatures[action.walletIndex] = signedState.signature
+
+          return Object.assign([], states)
         }
 
         case 'finalize': {
           if (!states.length) throw new Error('no states')
           const previousState = states[states.length - 1]
-          const newState: State = JSON.parse(JSON.stringify(previousState)) // deep copy
+          if (previousState.isFinal) {
+            window.alert('last state is already final')
+            return states
+          }
+          const newState: SignedState = JSON.parse(
+            JSON.stringify({ ...previousState, signatures: [] }),
+          ) // deep copy
           newState.isFinal = true
           newState.turnNum++
           states.push(newState)
@@ -182,7 +202,13 @@ export default function Home(): JSX.Element {
         case 'deposit': {
           if (!states.length) throw new Error('no states')
           const previousState = states[states.length - 1]
-          const newState: State = JSON.parse(JSON.stringify(previousState)) // deep copy
+          if (previousState.isFinal) {
+            window.alert('last state is already final')
+            return states
+          }
+          const newState: SignedState = JSON.parse(
+            JSON.stringify({ ...previousState, signatures: [] }),
+          ) // deep copy
           newState.turnNum++
 
           const asset = newState.outcome.find(
@@ -229,7 +255,13 @@ export default function Home(): JSX.Element {
         case 'transfer': {
           if (!states.length) throw new Error('no states')
           const previousState = states[states.length - 1]
-          const newState: State = JSON.parse(JSON.stringify(previousState)) // deep copy
+          if (previousState.isFinal) {
+            window.alert('last state is already final')
+            return states
+          }
+          const newState: SignedState = JSON.parse(
+            JSON.stringify({ ...previousState, signatures: [] }),
+          ) // deep copy
           newState.turnNum++
 
           const asset = newState.outcome.find(
@@ -462,16 +494,13 @@ export default function Home(): JSX.Element {
       return
     }
 
-    const whoSignedWhat = channel.wallets.map(() => 0) // everyone signs the last state
-
-    console.log('Signs states using ephemeral keys of everyone')
-    const signatures = await signStates(
-      [lastState],
-      channel.wallets,
-      whoSignedWhat,
-    )
+    if (lastState.signatures.length !== lastState.channel.participants.length) {
+      window.alert('not enough signature on the last state')
+      return
+    }
 
     // conclude
+    const whoSignedWhat = channel.wallets.map(() => 0) // everyone signs the last state
     const largestTurnNum = lastState.turnNum
     const fixedPart = getFixedPart(lastState)
     const appPartHash = hashAppPart(lastState)
@@ -485,7 +514,7 @@ export default function Home(): JSX.Element {
         outcomeHash,
         1,
         whoSignedWhat,
-        signatures,
+        lastState.signatures,
       )
     console.log('waiting for conclude tx', concludeTx.hash)
     await concludeTx.wait()
@@ -508,7 +537,7 @@ export default function Home(): JSX.Element {
     const signatures = await signStates(states, channel.wallets, whoSignedWhat)
 
     // challenger, sign last state (which it didn't sign in the previous signatures)
-    const challengeSignedState: SignedState = signState(
+    const challengeSignedState = signState(
       lastState,
       channel.wallets[0].privateKey, // TODO: make it dynamic. use corresponding wallet from account
     )
@@ -689,20 +718,25 @@ export default function Home(): JSX.Element {
               >
                 Finalize
               </button>{' '}
-              {/* <button
+              <button
                 type="button"
-                onClick={() =>
-                  signState().then((signature) =>
-                    console.log(
-                      `signature of state #${state.turnNum} by ${account}`,
-                      signature,
-                    ),
+                onClick={() => {
+                  const walletString = window.prompt(
+                    'Index of wallet to use to sign:',
+                    '0',
                   )
-                }
+                  if (!walletString) throw new Error('walletString is falsy')
+                  const walletIndex = Number.parseInt(walletString)
+                  dispatch({
+                    type: 'signLastState',
+                    walletIndex: walletIndex,
+                    wallet: channel.wallets[walletIndex],
+                  })
+                }}
                 style={{ cursor: 'pointer' }}
               >
                 Sign state
-              </button>{' '} */}
+              </button>{' '}
               <button
                 type="button"
                 onClick={() => conclude()}
