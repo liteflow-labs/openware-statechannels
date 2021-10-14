@@ -1,5 +1,5 @@
-import { BigNumber, BigNumberish } from '@ethersproject/bignumber'
-import { arrayify, hexZeroPad, splitSignature } from '@ethersproject/bytes'
+import { BigNumber } from '@ethersproject/bignumber'
+import { hexZeroPad } from '@ethersproject/bytes'
 import { AddressZero, HashZero } from '@ethersproject/constants'
 import { keccak256 } from '@ethersproject/keccak256'
 import { JsonRpcProvider } from '@ethersproject/providers'
@@ -7,17 +7,17 @@ import { formatEther, formatUnits, parseUnits } from '@ethersproject/units'
 import { Wallet } from '@ethersproject/wallet'
 import {
   AllocationAssetOutcome,
-  Channel,
   encodeOutcome,
   getChannelId,
   getChannelMode,
   getFixedPart,
-  getStateSignerAddress,
   getVariablePart,
   hashAppPart,
   hashOutcome,
-  hashState,
   signChallengeMessage,
+  SignedState,
+  signState,
+  signStates,
   State,
 } from '@statechannels/nitro-protocol'
 import { abi as NitroAdjudicatorContractAbi } from '@statechannels/nitro-protocol/lib/artifacts/contracts/NitroAdjudicator.sol/NitroAdjudicator.json'
@@ -37,9 +37,10 @@ const NitroAdjudicatorContractAddress =
 const TrivialAppContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
 
 type StateAction =
-  | { type: 'reset'; channel: Channel }
+  // | { type: 'reset'; channel: Channel }
+  | { type: 'setChainId'; chainId: string }
+  | { type: 'addParticipant'; address: string; ephemeral: Wallet }
   | { type: 'deposit'; asset: Address; amount: BigNumber; destination: string }
-  | { type: 'withdraw'; asset: Address; destination: string }
   | {
       type: 'transfer'
       asset: Address
@@ -67,6 +68,11 @@ export default function Home(): JSX.Element {
   }, [library, account])
 
   useEffect(() => {
+    if (!chainId) return
+    dispatch({ type: 'setChainId', chainId: chainId.toString() })
+  }, [chainId])
+
+  useEffect(() => {
     if (web3Error) throw web3Error
   }, [web3Error])
 
@@ -83,53 +89,10 @@ export default function Home(): JSX.Element {
     NitroAdjudicatorContractAbi,
   )
 
-  const [channelNonce, setChannelNonce] = useState(0)
-  const [participants, setParticipants] = useState<Wallet[]>([])
-
-  const channel = useMemo<Channel | undefined>(() => {
-    if (!chainId) return
-    return {
-      chainId: chainId.toString(),
-      channelNonce,
-      participants: participants.map((p) => p.address),
-    }
-  }, [chainId, channelNonce, participants])
-
-  useEffect(() => {
-    if (!channel) return
-    dispatch({
-      type: 'reset',
-      channel,
-    })
-  }, [channel])
-
-  const addNewParticipant = useCallback(async () => {
-    if (!signer) throw new Error('signer is falsy')
-    if (!chainId) throw new Error('chainId is falsy')
-    const signature = await signer._signTypedData(
-      {
-        name: 'OpenWare State Channel',
-        chainId: chainId.toString(),
-        version: '1',
-        verifyingContract: TrivialAppContractAddress,
-      },
-      {
-        Channel: [
-          { name: 'chainId', type: 'uint32' },
-          { name: 'channelNonce', type: 'uint32' },
-          { name: 'appDefinition', type: 'address' },
-        ],
-      },
-      {
-        chainId: chainId.toString(),
-        channelNonce: channelNonce.toString(),
-        appDefinition: TrivialAppContractAddress,
-      },
-    )
-    const newParticipant = new Wallet(keccak256(signature))
-    if (participants.find((p) => p.address === newParticipant.address)) return
-    setParticipants([...participants, newParticipant])
-  }, [chainId, channelNonce, participants, signer])
+  // const [channelNonce, setChannelNonce] = useState(0)
+  const [participants, setParticipants] = useState<
+    { ephemeral: Wallet; address: string }[]
+  >([])
 
   const validTransition = useCallback(
     async (previousState: State, newState: State) => {
@@ -159,32 +122,29 @@ export default function Home(): JSX.Element {
 
   const [state, dispatch] = useReducer(
     (state: State, action: StateAction): State => {
+      if (state.isFinal) {
+        window.alert('state is already final')
+        return state
+      }
+
       switch (action.type) {
+        case 'setChainId': {
+          state.channel.chainId = action.chainId
+          return Object.assign({}, state)
+        }
+
         case 'finalize': {
           state.isFinal = true
           return Object.assign({}, state)
         }
-        case 'reset': {
-          return Object.assign(
-            {},
-            {
-              isFinal: false,
-              channel: action.channel,
-              outcome: [
-                {
-                  asset: MAGIC_ADDRESS_INDICATING_ETH,
-                  allocationItems: action.channel.participants.map((p) => ({
-                    destination: hexZeroPad(p, 32),
-                    amount: '0',
-                  })),
-                },
-              ],
-              appDefinition: TrivialAppContractAddress,
-              appData: HashZero,
-              challengeDuration: 600, // 10 min
-              turnNum: 0,
-            },
-          )
+
+        case 'addParticipant': {
+          state.channel.participants.push(action.ephemeral.address)
+          ;(state.outcome[0] as AllocationAssetOutcome).allocationItems.push({
+            destination: hexZeroPad(action.address, 32),
+            amount: '0',
+          })
+          return Object.assign({}, state)
         }
 
         case 'deposit': {
@@ -208,24 +168,25 @@ export default function Home(): JSX.Element {
           return Object.assign({}, state)
         }
 
-        case 'withdraw': {
-          const asset = state.outcome.find(
-            (assetOutcome) => assetOutcome.asset === action.asset,
-          ) as AllocationAssetOutcome | undefined
-          if (!asset) throw new Error('asset not found')
+        // TODO: is it possible to withdraw without closing the channel?
+        // case 'withdraw': {
+        //   const asset = state.outcome.find(
+        //     (assetOutcome) => assetOutcome.asset === action.asset,
+        //   ) as AllocationAssetOutcome | undefined
+        //   if (!asset) throw new Error('asset not found')
 
-          // find right allocationItem
-          const destination = hexZeroPad(action.destination, 32)
-          const allocationItem = asset.allocationItems.find(
-            (item) => item.destination === destination,
-          )
-          if (!allocationItem) throw new Error('allocationItem not found')
+        //   // find right allocationItem
+        //   const destination = hexZeroPad(action.destination, 32)
+        //   const allocationItem = asset.allocationItems.find(
+        //     (item) => item.destination === destination,
+        //   )
+        //   if (!allocationItem) throw new Error('allocationItem not found')
 
-          // do the update of balance
-          allocationItem.amount = '0'
+        //   // do the update of balance
+        //   allocationItem.amount = '0'
 
-          return Object.assign({}, state)
-        }
+        //   return Object.assign({}, state)
+        // }
 
         case 'transfer': {
           const previousState = Object.assign({}, state)
@@ -267,13 +228,71 @@ export default function Home(): JSX.Element {
         }
       }
     },
-    {} as State, // dirty hack
+    {
+      isFinal: false,
+      channel: {
+        channelNonce: 0,
+        participants: [],
+        chainId: '0',
+      },
+      outcome: [
+        {
+          asset: MAGIC_ADDRESS_INDICATING_ETH,
+          allocationItems: [],
+        },
+      ],
+      appDefinition: TrivialAppContractAddress,
+      appData: HashZero,
+      challengeDuration: 30,
+      turnNum: 0,
+    } as State, // dirty hack
   )
 
+  const addNewParticipant = useCallback(async () => {
+    if (!signer) throw new Error('signer is falsy')
+    if (!account) throw new Error('account is falsy')
+    const signature = await signer._signTypedData(
+      {
+        name: 'OpenWare State Channel',
+        chainId: state.channel.chainId,
+        version: '1',
+        verifyingContract: TrivialAppContractAddress,
+      },
+      {
+        Channel: [
+          { name: 'chainId', type: 'uint32' },
+          // { name: 'channelNonce', type: 'uint32' },
+          { name: 'appDefinition', type: 'address' },
+        ],
+      },
+      {
+        chainId: state.channel.chainId,
+        // channelNonce: channelNonce.toString(),
+        appDefinition: state.appDefinition,
+      },
+    )
+    const ephemeral = new Wallet(keccak256(signature))
+    if (
+      participants.find(
+        (p) =>
+          p.address === account || p.ephemeral.address === ephemeral.address,
+      )
+    ) {
+      window.alert('participant already added')
+      return
+    }
+    setParticipants([...participants, { ephemeral, address: account }])
+    dispatch({
+      type: 'addParticipant',
+      address: account,
+      ephemeral,
+    })
+  }, [account, participants, signer, state])
+
   const channelId = useMemo(() => {
-    if (!channel) return
-    return getChannelId(channel)
-  }, [channel])
+    if (!state.channel) return
+    return getChannelId(state.channel)
+  }, [state])
 
   const [channelMode, setChannelMode] = useState<string>()
   const fetchChannelMode = useCallback(() => {
@@ -285,6 +304,12 @@ export default function Home(): JSX.Element {
         getChannelMode(status.finalizesAt, Math.floor(Date.now() / 1000)),
       )
       .then(setChannelMode)
+      .catch((error) =>
+        console.warn(
+          'error from unpackStatus may caused by channel with no deposit',
+          error,
+        ),
+      )
   }, [channelId, nitroAdjudicatorContract])
   useEffect(() => fetchChannelMode(), [fetchChannelMode])
 
@@ -295,6 +320,12 @@ export default function Home(): JSX.Element {
     void nitroAdjudicatorContract
       .holdings(AddressZero, channelId)
       .then(setHoldings)
+      .catch((error) =>
+        console.warn(
+          'error from holdings may caused by channel with no deposit',
+          error,
+        ),
+      )
   }, [channelId, nitroAdjudicatorContract])
   useEffect(() => fetchHoldings(), [fetchHoldings])
 
@@ -307,8 +338,15 @@ export default function Home(): JSX.Element {
     if (!holdings) throw new Error('holdings is falsy')
     if (!signer) throw new Error('signer is falsy')
 
-    const amount = parseUnits('1', 'ether')
+    const participant = participants.find((p) => p.address === account)
+    if (!participant) throw new Error('participant not found')
+
+    const amountString = window.prompt('How many ETH to deposit?', '1')
+    if (!amountString) throw new Error('amountString is falsy')
+
+    const amount = parseUnits(amountString, 'ether')
     const expectedHeld = holdings
+
     console.log('creating deposit tx')
     const depositTx = await nitroAdjudicatorContract
       .connect(signer)
@@ -321,7 +359,7 @@ export default function Home(): JSX.Element {
     dispatch({
       type: 'deposit',
       asset: MAGIC_ADDRESS_INDICATING_ETH,
-      destination: account,
+      destination: participant.address,
       amount,
     })
     fetchHoldings()
@@ -333,23 +371,35 @@ export default function Home(): JSX.Element {
     library,
     holdings,
     signer,
+    participants,
     fetchHoldings,
     fetchBalance,
   ])
 
-  const signState = useCallback(() => {
-    if (!channel) throw new Error('channel is falsy')
+  const transferToOther = useCallback(() => {
     if (!account) throw new Error('account is falsy')
-    if (!library) throw new Error('library is falsy')
-    if (!state) throw new Error('state is falsy')
-    if (!signer) throw new Error('signer is falsy')
+    const accountEncoded = hexZeroPad(account, 32)
+    const other = (
+      state.outcome[0] as AllocationAssetOutcome
+    ).allocationItems.find(
+      (alloc) => alloc.destination !== accountEncoded,
+    )?.destination
+    if (!other) throw new Error('no other participant found')
 
-    const hashedState = hashState(state)
-    return signer.signMessage(arrayify(hashedState))
-  }, [account, channel, library, signer, state])
+    const amountString = window.prompt('How many ETH to transfer?', '1')
+    if (!amountString) throw new Error('amountString is falsy')
+    const amount = parseUnits(amountString, 'ether')
+
+    dispatch({
+      type: 'transfer',
+      amount: amount,
+      asset: MAGIC_ADDRESS_INDICATING_ETH,
+      from: account,
+      to: other,
+    })
+  }, [account, state])
 
   const conclude = useCallback(async () => {
-    if (!channel) throw new Error('channel is falsy')
     if (!nitroAdjudicatorContract)
       throw new Error('nitroAdjudicatorContract is falsy')
     if (!account) throw new Error('account is falsy')
@@ -357,24 +407,25 @@ export default function Home(): JSX.Element {
     if (!state) throw new Error('state is falsy')
     if (!signer) throw new Error('signer is falsy')
 
-    const largestTurnNum = state.turnNum
-    const numStates = 1
-    const whoSignedWhat = [0, 0]
+    const states = [state]
 
-    // ask and verify signature
-    const sigs = state.channel.participants.map((participant) => {
-      const sign = window.prompt(`Enter signature of ${participant}`)
-      if (!sign) throw new Error('sign is falsy')
-      const signSplit = splitSignature(sign)
-      const signVerif = getStateSignerAddress({
-        state,
-        signature: signSplit,
-      })
-      if (participant.toLowerCase() !== signVerif.toLowerCase())
-        throw new Error('signature is from the wrong address signature')
-      console.log('signature is valid')
-      return signSplit
-    })
+    if (!states[states.length - 1].isFinal) {
+      window.alert('Last state must be final')
+      return
+    }
+
+    const largestTurnNum = states[states.length - 1].turnNum // TODO: make it dynamic
+    const whoSignedWhat = states[0].channel.participants.map(
+      // TODO: make it dynamic
+      () => states.length - 1,
+    ) // everyone signs the last state
+
+    console.log('Signs states using ephemeral keys of everyone')
+    const signatures = await signStates(
+      [state],
+      participants.map((p) => p.ephemeral),
+      whoSignedWhat,
+    )
 
     // conclude
     const fixedPart = getFixedPart(state)
@@ -387,17 +438,16 @@ export default function Home(): JSX.Element {
         fixedPart,
         appPartHash,
         outcomeHash,
-        numStates,
+        states.length,
         whoSignedWhat,
-        sigs,
+        signatures,
       )
     console.log('waiting for conclude tx', concludeTx.hash)
     await concludeTx.wait()
     console.log('conclude tx is done')
-  }, [account, channel, library, nitroAdjudicatorContract, signer, state])
+  }, [account, library, nitroAdjudicatorContract, participants, signer, state])
 
   const challenge = useCallback(async () => {
-    if (!channel) throw new Error('channel is falsy')
     if (!nitroAdjudicatorContract)
       throw new Error('nitroAdjudicatorContract is falsy')
     if (!account) throw new Error('account is falsy')
@@ -406,37 +456,24 @@ export default function Home(): JSX.Element {
     if (!signer) throw new Error('signer is falsy')
 
     const largestTurnNum = state.turnNum
-    const whoSignedWhat = [0, 1]
+    const whoSignedWhat = [0, 1] // TODO: make it dynamic
+    const states = [state, state] // TODO: make it dynamic
 
-    // ask and verify signature
-    const sigs = state.channel.participants.map((participant) => {
-      const sign = window.prompt(`Enter signature of ${participant}`)
-      if (!sign) throw new Error('sign is falsy')
-      const signSplit = splitSignature(sign)
-      const signVerif = getStateSignerAddress({
-        state,
-        signature: signSplit,
-      })
-      if (participant.toLowerCase() !== signVerif.toLowerCase())
-        throw new Error('signature is from the wrong address signature')
-      console.log('signature is valid')
-      return signSplit
-    })
+    console.log('Signs states using ephemeral keys of everyone')
+    const signatures = await signStates(
+      states,
+      participants.map((p) => p.ephemeral),
+      whoSignedWhat,
+    )
 
-    // challenge
-    // const challengeHash = hashChallengeMessage(state)
-    // const signingKey = new SigningKey(
-    //   '0xdf57089febbacf7ba0bc227dafbffa9fc08a93fdc68e1e42411a14efcf23656e',
-    // )
-    // const signedMessage = signingKey.signDigest(hashMessage(challengeHash)) // FIXME: this signature is not working with signMessage from wallet...
-    // const challengeSignature = splitSignature(signedMessage)
-    // https://github.com/statechannels/statechannels/blob/%40statechannels/nitro-protocol%400.17.3/packages/nitro-protocol/src/signatures.ts
+    // challenger, sign last state (which it didn't sign in the previous signatures)
+    const challengeSignedState: SignedState = signState(
+      states[states.length - 1],
+      participants[0].ephemeral.privateKey,
+    )
     const challengeSignature = signChallengeMessage(
-      [
-        { state, signature: sigs[0] },
-        { state, signature: sigs[0] },
-      ],
-      '0xdf57089febbacf7ba0bc227dafbffa9fc08a93fdc68e1e42411a14efcf23656e',
+      [challengeSignedState],
+      participants[0].ephemeral.privateKey,
     )
 
     const fixedPart = getFixedPart(state)
@@ -445,18 +482,18 @@ export default function Home(): JSX.Element {
       .challenge(
         fixedPart,
         largestTurnNum,
-        [getVariablePart(state), getVariablePart(state)],
+        states.map((state) => getVariablePart(state)),
         0, // isFinalCount
-        sigs,
+        signatures,
         whoSignedWhat,
         challengeSignature,
       )
     console.log('waiting for challenge tx', challengeTx.hash)
     await challengeTx.wait()
     console.log('challenge tx is done')
-  }, [account, channel, library, nitroAdjudicatorContract, signer, state])
+  }, [account, library, nitroAdjudicatorContract, participants, signer, state])
 
-  const withdraw = useCallback(async () => {
+  const withdrawAllAssets = useCallback(async () => {
     if (!nitroAdjudicatorContract)
       throw new Error('nitroAdjudicatorContract is falsy')
     if (!account) throw new Error('account is falsy')
@@ -466,20 +503,16 @@ export default function Home(): JSX.Element {
     if (!signer) throw new Error('signer is falsy')
 
     const outcomeBytes = encodeOutcome(state.outcome)
-    const assetIndex = 0 // implies we are paying out the 0th asset
+    // const assetIndex = 0 // implies we are paying out the 0th asset
     const stateHash = HashZero // if the channel was concluded on the happy path, we can use this default value
-    const indices: BigNumberish[] = [] // this magic value (a zero length array) implies we want to pay out all of the allocationItems
-    const withdrawTx = await nitroAdjudicatorContract
+    // const indices: BigNumberish[] = [] // this magic value (a zero length array) implies we want to pay out all of the allocationItems
+    const withdrawAllAssetsTx = await nitroAdjudicatorContract
       .connect(signer)
-      .transfer(assetIndex, channelId, outcomeBytes, stateHash, indices)
-    console.log('waiting for withdraw tx', withdrawTx.hash)
-    await withdrawTx.wait()
-    console.log('withdraw tx is done')
-    dispatch({
-      type: 'withdraw',
-      asset: MAGIC_ADDRESS_INDICATING_ETH,
-      destination: account,
-    })
+      // .transfer(assetIndex, channelId, outcomeBytes, stateHash, indices)
+      .transferAllAssets(channelId, outcomeBytes, stateHash)
+    console.log('waiting for withdrawAllAssets tx', withdrawAllAssetsTx.hash)
+    await withdrawAllAssetsTx.wait()
+    console.log('withdrawAllAssets tx is done')
     fetchHoldings()
     fetchBalance()
   }, [
@@ -530,11 +563,11 @@ export default function Home(): JSX.Element {
           )}
         </div>
 
-        {account && channel && (
+        {account && state.channel && (
           <div>
             <h2>Channel</h2>
             <p>Id: {channelId}</p>
-            <pre>{JSON.stringify(channel, null, 4)}</pre>
+            <pre>{JSON.stringify(state.channel, null, 4)}</pre>
             <p>
               The channel currently holds: {formatUnits(holdings || '0')}{' '}
               <button
@@ -561,10 +594,10 @@ export default function Home(): JSX.Element {
             </button>{' '}
             <button
               type="button"
-              onClick={() => withdraw()}
+              onClick={() => withdrawAllAssets()}
               style={{ cursor: 'pointer' }}
             >
-              Withdraw
+              Withdraw All
             </button>{' '}
             <button
               type="button"
@@ -596,19 +629,7 @@ export default function Home(): JSX.Element {
             <p>
               <button
                 type="button"
-                onClick={() => {
-                  const other = state.channel.participants.find(
-                    (p) => p !== account,
-                  )
-                  if (!other) throw new Error('no other participant found')
-                  dispatch({
-                    type: 'transfer',
-                    amount: parseUnits('1', 'ether'),
-                    asset: MAGIC_ADDRESS_INDICATING_ETH,
-                    from: account,
-                    to: other,
-                  })
-                }}
+                onClick={() => transferToOther()}
                 style={{ cursor: 'pointer' }}
               >
                 Transfer to other
@@ -620,7 +641,7 @@ export default function Home(): JSX.Element {
               >
                 Finalize
               </button>{' '}
-              <button
+              {/* <button
                 type="button"
                 onClick={() =>
                   signState().then((signature) =>
@@ -633,7 +654,7 @@ export default function Home(): JSX.Element {
                 style={{ cursor: 'pointer' }}
               >
                 Sign state
-              </button>{' '}
+              </button>{' '} */}
               <button
                 type="button"
                 onClick={() => conclude()}
@@ -647,7 +668,7 @@ export default function Home(): JSX.Element {
                 style={{ cursor: 'pointer' }}
               >
                 Challenge
-              </button>
+              </button>{' '}
             </p>
           </div>
         )}
