@@ -17,7 +17,6 @@ import {
   hashOutcome,
   signChallengeMessage,
   signState,
-  signStates,
   State,
 } from '@statechannels/nitro-protocol'
 import { abi as NitroAdjudicatorContractAbi } from '@statechannels/nitro-protocol/lib/artifacts/contracts/NitroAdjudicator.sol/NitroAdjudicator.json'
@@ -65,6 +64,9 @@ type StateAction =
     }
   | {
       type: 'finalize'
+    }
+  | {
+      type: 'copyLastState'
     }
   | {
       type: 'signLastState'
@@ -171,6 +173,17 @@ export default function Home(): JSX.Element {
             signatures: [],
           }
           return Object.assign([], [newState])
+        }
+
+        case 'copyLastState': {
+          if (!states.length) throw new Error('no states')
+          const previousState = states[states.length - 1]
+          const newState: SignedState = JSON.parse(
+            JSON.stringify({ ...previousState, signatures: [] }),
+          ) // deep copy
+          newState.turnNum++
+          states.push(newState)
+          return Object.assign([], states)
         }
 
         case 'signLastState': {
@@ -421,7 +434,7 @@ export default function Home(): JSX.Element {
     if (!signer) throw new Error('signer is falsy')
 
     const amountString = window.prompt('How many ETH to deposit?', '1')
-    if (!amountString) throw new Error('amountString is falsy')
+    if (!amountString) return
 
     const amount = parseUnits(amountString, 'ether')
     const expectedHeld = holdings
@@ -467,7 +480,7 @@ export default function Home(): JSX.Element {
     if (!other) throw new Error('no other participant found')
 
     const amountString = window.prompt('How many ETH to transfer?', '1')
-    if (!amountString) throw new Error('amountString is falsy')
+    if (!amountString) return
     const amount = parseUnits(amountString, 'ether')
 
     dispatch({
@@ -521,48 +534,78 @@ export default function Home(): JSX.Element {
     console.log('conclude tx is done')
   }, [account, channel, library, nitroAdjudicatorContract, signer, states])
 
-  const challenge = useCallback(async () => {
-    if (!nitroAdjudicatorContract)
-      throw new Error('nitroAdjudicatorContract is falsy')
-    if (!account) throw new Error('account is falsy')
-    if (!library) throw new Error('library is falsy')
-    if (!signer) throw new Error('signer is falsy')
+  const challenge = useCallback(
+    async (walletIndex: number) => {
+      if (!nitroAdjudicatorContract)
+        throw new Error('nitroAdjudicatorContract is falsy')
+      if (!account) throw new Error('account is falsy')
+      if (!library) throw new Error('library is falsy')
+      if (!signer) throw new Error('signer is falsy')
 
-    if (!states.length) throw new Error('no states')
-    const lastState = states[states.length - 1]
+      if (!states.length) throw new Error('no states')
+      const lastState = states[states.length - 1]
 
-    const whoSignedWhat = [0, 1] // TODO: make it dynamic
+      const whoSignedWhat: number[] = []
+      const signatures: Signature[] = []
+      states.forEach((state, stateIndex) => {
+        state.signatures.forEach((signature, signatureIndex) => {
+          if (!signature) return
+          signatures[signatureIndex] = signature
+          whoSignedWhat[signatureIndex] = stateIndex
+        })
+      })
+      if (whoSignedWhat.length !== lastState.channel.participants.length) {
+        window.alert("some participant didn't sign")
+        return
+      }
+      console.log('whoSignedWhat', whoSignedWhat)
 
-    console.log('Signs states using ephemeral keys of everyone')
-    const signatures = await signStates(states, channel.wallets, whoSignedWhat)
-
-    // challenger, sign last state (which it didn't sign in the previous signatures)
-    const challengeSignedState = signState(
-      lastState,
-      channel.wallets[0].privateKey, // TODO: make it dynamic. use corresponding wallet from account
-    )
-    const challengeSignature = signChallengeMessage(
-      [challengeSignedState],
-      channel.wallets[0].privateKey, // TODO: make it dynamic. use corresponding wallet from account
-    )
-
-    const largestTurnNum = lastState.turnNum
-    const fixedPart = getFixedPart(lastState)
-    const challengeTx = await nitroAdjudicatorContract
-      .connect(signer)
-      .challenge(
-        fixedPart,
-        largestTurnNum,
-        states.map((state) => getVariablePart(state)),
-        0, // isFinalCount
-        signatures,
-        whoSignedWhat,
-        challengeSignature,
+      // challenger, sign last state (which it didn't sign in the previous signatures)
+      const challengeSignedState = signState(
+        lastState,
+        channel.wallets[walletIndex].privateKey,
       )
-    console.log('waiting for challenge tx', challengeTx.hash)
-    await challengeTx.wait()
-    console.log('challenge tx is done')
-  }, [account, channel, library, nitroAdjudicatorContract, signer, states])
+      const challengeSignature = signChallengeMessage(
+        [challengeSignedState],
+        channel.wallets[walletIndex].privateKey,
+      )
+
+      // remove unnecessary states
+      const earlierSignedStateIndex = whoSignedWhat.reduce(
+        (minState, stateIndex) => {
+          return Math.min(minState, stateIndex)
+        },
+        Infinity,
+      )
+      console.log('earlierSignedStateIndex', earlierSignedStateIndex)
+      const usefulStates = states.slice(earlierSignedStateIndex)
+      console.log('usefulStates.length', usefulStates.length)
+      console.log('usefulStates', usefulStates)
+      const whoSignedWhatShifted = whoSignedWhat.map(
+        (value) => value - earlierSignedStateIndex,
+      )
+      console.log('whoSignedWhatShifted', whoSignedWhatShifted)
+      console.log('signatures', signatures)
+
+      const largestTurnNum = lastState.turnNum
+      const fixedPart = getFixedPart(lastState)
+      const challengeTx = await nitroAdjudicatorContract
+        .connect(signer)
+        .challenge(
+          fixedPart,
+          largestTurnNum,
+          usefulStates.map((state) => getVariablePart(state)),
+          0, // isFinalCount
+          signatures,
+          whoSignedWhatShifted,
+          challengeSignature,
+        )
+      console.log('waiting for challenge tx', challengeTx.hash)
+      await challengeTx.wait()
+      console.log('challenge tx is done')
+    },
+    [account, channel, library, nitroAdjudicatorContract, signer, states],
+  )
 
   const withdrawAllAssets = useCallback(async () => {
     if (!nitroAdjudicatorContract)
@@ -713,6 +756,13 @@ export default function Home(): JSX.Element {
               </button>{' '}
               <button
                 type="button"
+                onClick={() => dispatch({ type: 'copyLastState' })}
+                style={{ cursor: 'pointer' }}
+              >
+                Copy last state
+              </button>{' '}
+              <button
+                type="button"
                 onClick={() => dispatch({ type: 'finalize' })}
                 style={{ cursor: 'pointer' }}
               >
@@ -725,7 +775,7 @@ export default function Home(): JSX.Element {
                     'Index of wallet to use to sign:',
                     '0',
                   )
-                  if (!walletString) throw new Error('walletString is falsy')
+                  if (!walletString) return
                   const walletIndex = Number.parseInt(walletString)
                   dispatch({
                     type: 'signLastState',
@@ -746,7 +796,15 @@ export default function Home(): JSX.Element {
               </button>{' '}
               <button
                 type="button"
-                onClick={() => challenge()}
+                onClick={() => {
+                  const walletString = window.prompt(
+                    'Index of wallet to use to challenge:',
+                    '0',
+                  )
+                  if (!walletString) return
+                  const walletIndex = Number.parseInt(walletString)
+                  void challenge(walletIndex)
+                }}
                 style={{ cursor: 'pointer' }}
               >
                 Challenge
