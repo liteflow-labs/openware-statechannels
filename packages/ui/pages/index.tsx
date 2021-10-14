@@ -7,6 +7,7 @@ import { formatEther, formatUnits, parseUnits } from '@ethersproject/units'
 import { Wallet } from '@ethersproject/wallet'
 import {
   AllocationAssetOutcome,
+  Channel,
   encodeOutcome,
   getChannelId,
   getChannelMode,
@@ -32,14 +33,25 @@ import { injectedConnector } from '../lib/connector'
 
 // TODO: must implement the ephemeral keys in the participants but keep the real wallet in the outcomes
 
+type ChannelWithWallets = Omit<Channel, 'participants'> & {
+  accounts: string[] // User's ethereum wallet
+  wallets: Wallet[] // Ephemeral wallets
+}
+
 const NitroAdjudicatorContractAddress =
   '0x5FbDB2315678afecb367f032d93F642f64180aa3'
 const TrivialAppContractAddress = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
 
-type StateAction =
-  | { type: 'setChannelNonce'; channelNonce: number }
+type ChannelAction =
+  | { type: 'setNonce'; channelNonce: number }
   | { type: 'setChainId'; chainId: string }
-  | { type: 'addParticipant'; address: string; ephemeral: Wallet }
+  | { type: 'addParticipant'; account: string; ephemeral: Wallet }
+
+type StateAction =
+  | {
+      type: 'init'
+      channel: ChannelWithWallets
+    }
   | { type: 'deposit'; asset: Address; amount: BigNumber; destination: string }
   | {
       type: 'transfer'
@@ -69,7 +81,7 @@ export default function Home(): JSX.Element {
 
   useEffect(() => {
     if (!chainId) return
-    dispatch({ type: 'setChainId', chainId: chainId.toString() })
+    dispatchChannel({ type: 'setChainId', chainId: chainId.toString() })
   }, [chainId])
 
   useEffect(() => {
@@ -77,6 +89,7 @@ export default function Home(): JSX.Element {
   }, [web3Error])
 
   const [balance, setBalance] = useState<BigNumber>()
+
   const fetchBalance = useCallback(() => {
     if (!library) return
     if (!account) return
@@ -91,12 +104,8 @@ export default function Home(): JSX.Element {
 
   const [channelNonce, setChannelNonce] = useState(0)
   useEffect(() => {
-    dispatch({ type: 'setChannelNonce', channelNonce })
+    dispatchChannel({ type: 'setNonce', channelNonce })
   }, [channelNonce])
-
-  const [participants, setParticipants] = useState<
-    { ephemeral: Wallet; address: string }[]
-  >([])
 
   const validTransition = useCallback(
     async (previousState: State, newState: State) => {
@@ -118,46 +127,65 @@ export default function Home(): JSX.Element {
         newState.turnNum,
         newState.appDefinition,
       )
-      if (!isValidTransition) throw new Error('transition is not valid')
+      if (!isValidTransition) {
+        window.alert('transition is not valid')
+        return
+      }
       console.log('transition is valid')
     },
     [nitroAdjudicatorContract],
   )
 
-  const [state, dispatch] = useReducer(
-    (state: State, action: StateAction): State => {
-      if (state.isFinal) {
-        window.alert('state is already final')
-        return state
+  const [states, dispatch] = useReducer(
+    (states: State[], action: StateAction): State[] => {
+      if (states.length > 0 && states[states.length - 1].isFinal) {
+        window.alert('last state is already final')
+        return states
       }
 
       switch (action.type) {
-        case 'setChannelNonce': {
-          state.channel.channelNonce = action.channelNonce
-          return Object.assign({}, state)
-        }
-
-        case 'setChainId': {
-          state.channel.chainId = action.chainId
-          return Object.assign({}, state)
+        case 'init': {
+          const newState: State = {
+            isFinal: false,
+            channel: {
+              channelNonce: action.channel.channelNonce,
+              chainId: action.channel.chainId,
+              participants: action.channel.wallets.map((w) => w.address),
+            },
+            outcome: [
+              {
+                asset: MAGIC_ADDRESS_INDICATING_ETH,
+                allocationItems: action.channel.accounts.map((acc) => ({
+                  destination: hexZeroPad(acc, 32),
+                  amount: '0',
+                })),
+              },
+            ],
+            appDefinition: TrivialAppContractAddress,
+            appData: HashZero,
+            challengeDuration: 30,
+            turnNum: 0,
+          }
+          return Object.assign([], [newState])
         }
 
         case 'finalize': {
-          state.isFinal = true
-          return Object.assign({}, state)
-        }
-
-        case 'addParticipant': {
-          state.channel.participants.push(action.ephemeral.address)
-          ;(state.outcome[0] as AllocationAssetOutcome).allocationItems.push({
-            destination: hexZeroPad(action.address, 32),
-            amount: '0',
-          })
-          return Object.assign({}, state)
+          if (!states.length) throw new Error('no states')
+          const previousState = states[states.length - 1]
+          const newState: State = JSON.parse(JSON.stringify(previousState)) // deep copy
+          newState.isFinal = true
+          newState.turnNum++
+          states.push(newState)
+          return Object.assign([], states)
         }
 
         case 'deposit': {
-          const asset = state.outcome.find(
+          if (!states.length) throw new Error('no states')
+          const previousState = states[states.length - 1]
+          const newState: State = JSON.parse(JSON.stringify(previousState)) // deep copy
+          newState.turnNum++
+
+          const asset = newState.outcome.find(
             (assetOutcome) => assetOutcome.asset === action.asset,
           ) as AllocationAssetOutcome | undefined
           if (!asset) throw new Error('asset not found')
@@ -174,7 +202,8 @@ export default function Home(): JSX.Element {
             .add(allocationItem.amount)
             .toString()
 
-          return Object.assign({}, state)
+          states.push(newState)
+          return Object.assign([], states)
         }
 
         // TODO: is it possible to withdraw without closing the channel?
@@ -198,8 +227,12 @@ export default function Home(): JSX.Element {
         // }
 
         case 'transfer': {
-          const previousState = Object.assign({}, state)
-          const asset = state.outcome.find(
+          if (!states.length) throw new Error('no states')
+          const previousState = states[states.length - 1]
+          const newState: State = JSON.parse(JSON.stringify(previousState)) // deep copy
+          newState.turnNum++
+
+          const asset = newState.outcome.find(
             (assetOutcome) => assetOutcome.asset === action.asset,
           ) as AllocationAssetOutcome | undefined
           if (!asset) throw new Error('asset not found')
@@ -227,34 +260,50 @@ export default function Home(): JSX.Element {
             .add(action.amount)
             .toString()
 
-          // increase turn number
-          state.turnNum++
-
           // check if transition is valid
-          void validTransition(previousState, state)
+          void validTransition(previousState, newState)
 
-          return Object.assign({}, state)
+          states.push(newState)
+          return Object.assign([], states)
+        }
+      }
+    },
+    [],
+  )
+
+  const [channel, dispatchChannel] = useReducer(
+    (
+      channel: ChannelWithWallets,
+      action: ChannelAction,
+    ): ChannelWithWallets => {
+      switch (action.type) {
+        case 'setNonce': {
+          channel.channelNonce = action.channelNonce
+          return Object.assign({}, channel)
+        }
+        case 'setChainId': {
+          channel.chainId = action.chainId
+          return Object.assign({}, channel)
+        }
+        case 'addParticipant': {
+          if (channel.accounts.find((acc) => acc === action.account)) {
+            window.alert('participant already added')
+            return channel
+          }
+
+          channel.wallets.push(action.ephemeral)
+          channel.accounts.push(action.account)
+
+          return Object.assign({}, channel)
         }
       }
     },
     {
-      isFinal: false,
-      channel: {
-        channelNonce: 0,
-        participants: [],
-        chainId: '0',
-      },
-      outcome: [
-        {
-          asset: MAGIC_ADDRESS_INDICATING_ETH,
-          allocationItems: [],
-        },
-      ],
-      appDefinition: TrivialAppContractAddress,
-      appData: HashZero,
-      challengeDuration: 30,
-      turnNum: 0,
-    } as State, // dirty hack
+      channelNonce: 0,
+      chainId: '0',
+      wallets: [],
+      accounts: [],
+    },
   )
 
   const addNewParticipant = useCallback(async () => {
@@ -263,45 +312,37 @@ export default function Home(): JSX.Element {
     const signature = await signer._signTypedData(
       {
         name: 'OpenWare State Channel',
-        chainId: state.channel.chainId,
+        chainId: chainId,
         version: '1',
         verifyingContract: TrivialAppContractAddress,
       },
       {
         Channel: [
           { name: 'chainId', type: 'uint32' },
-          // { name: 'channelNonce', type: 'uint32' },
+          { name: 'channelNonce', type: 'uint32' },
           { name: 'appDefinition', type: 'address' },
         ],
       },
       {
-        chainId: state.channel.chainId,
-        // channelNonce: channelNonce.toString(),
-        appDefinition: state.appDefinition,
+        chainId: chainId,
+        channelNonce: channelNonce.toString(),
+        appDefinition: TrivialAppContractAddress,
       },
     )
     const ephemeral = new Wallet(keccak256(signature))
-    if (
-      participants.find(
-        (p) =>
-          p.address === account || p.ephemeral.address === ephemeral.address,
-      )
-    ) {
-      window.alert('participant already added')
-      return
-    }
-    setParticipants([...participants, { ephemeral, address: account }])
-    dispatch({
+    dispatchChannel({
       type: 'addParticipant',
-      address: account,
+      account,
       ephemeral,
     })
-  }, [account, participants, signer, state])
+  }, [account, chainId, channelNonce, signer])
 
   const channelId = useMemo(() => {
-    if (!state.channel) return
-    return getChannelId(state.channel)
-  }, [state])
+    return getChannelId({
+      ...channel,
+      participants: channel.wallets.map((w) => w.address),
+    })
+  }, [channel])
 
   const [channelMode, setChannelMode] = useState<string>()
   const fetchChannelMode = useCallback(() => {
@@ -347,9 +388,6 @@ export default function Home(): JSX.Element {
     if (!holdings) throw new Error('holdings is falsy')
     if (!signer) throw new Error('signer is falsy')
 
-    const participant = participants.find((p) => p.address === account)
-    if (!participant) throw new Error('participant not found')
-
     const amountString = window.prompt('How many ETH to deposit?', '1')
     if (!amountString) throw new Error('amountString is falsy')
 
@@ -368,7 +406,7 @@ export default function Home(): JSX.Element {
     dispatch({
       type: 'deposit',
       asset: MAGIC_ADDRESS_INDICATING_ETH,
-      destination: participant.address,
+      destination: account,
       amount,
     })
     fetchHoldings()
@@ -380,7 +418,6 @@ export default function Home(): JSX.Element {
     library,
     holdings,
     signer,
-    participants,
     fetchHoldings,
     fetchBalance,
   ])
@@ -388,8 +425,10 @@ export default function Home(): JSX.Element {
   const transferToOther = useCallback(() => {
     if (!account) throw new Error('account is falsy')
     const accountEncoded = hexZeroPad(account, 32)
+    if (!states.length) throw new Error('no states')
+    const lastState = states[states.length - 1]
     const other = (
-      state.outcome[0] as AllocationAssetOutcome
+      lastState.outcome[0] as AllocationAssetOutcome
     ).allocationItems.find(
       (alloc) => alloc.destination !== accountEncoded,
     )?.destination
@@ -406,40 +445,37 @@ export default function Home(): JSX.Element {
       from: account,
       to: other,
     })
-  }, [account, state])
+  }, [account, states])
 
   const conclude = useCallback(async () => {
     if (!nitroAdjudicatorContract)
       throw new Error('nitroAdjudicatorContract is falsy')
     if (!account) throw new Error('account is falsy')
     if (!library) throw new Error('library is falsy')
-    if (!state) throw new Error('state is falsy')
     if (!signer) throw new Error('signer is falsy')
 
-    const states = [state]
+    if (!states.length) throw new Error('no states')
+    const lastState = states[states.length - 1]
 
-    if (!states[states.length - 1].isFinal) {
+    if (!lastState.isFinal) {
       window.alert('Last state must be final')
       return
     }
 
-    const largestTurnNum = states[states.length - 1].turnNum // TODO: make it dynamic
-    const whoSignedWhat = states[0].channel.participants.map(
-      // TODO: make it dynamic
-      () => states.length - 1,
-    ) // everyone signs the last state
+    const whoSignedWhat = channel.wallets.map(() => 0) // everyone signs the last state
 
     console.log('Signs states using ephemeral keys of everyone')
     const signatures = await signStates(
-      [state],
-      participants.map((p) => p.ephemeral),
+      [lastState],
+      channel.wallets,
       whoSignedWhat,
     )
 
     // conclude
-    const fixedPart = getFixedPart(state)
-    const appPartHash = hashAppPart(state)
-    const outcomeHash = hashOutcome(state.outcome)
+    const largestTurnNum = lastState.turnNum
+    const fixedPart = getFixedPart(lastState)
+    const appPartHash = hashAppPart(lastState)
+    const outcomeHash = hashOutcome(lastState.outcome)
     const concludeTx = await nitroAdjudicatorContract
       .connect(signer)
       .conclude(
@@ -447,45 +483,42 @@ export default function Home(): JSX.Element {
         fixedPart,
         appPartHash,
         outcomeHash,
-        states.length,
+        1,
         whoSignedWhat,
         signatures,
       )
     console.log('waiting for conclude tx', concludeTx.hash)
     await concludeTx.wait()
     console.log('conclude tx is done')
-  }, [account, library, nitroAdjudicatorContract, participants, signer, state])
+  }, [account, channel, library, nitroAdjudicatorContract, signer, states])
 
   const challenge = useCallback(async () => {
     if (!nitroAdjudicatorContract)
       throw new Error('nitroAdjudicatorContract is falsy')
     if (!account) throw new Error('account is falsy')
     if (!library) throw new Error('library is falsy')
-    if (!state) throw new Error('state is falsy')
     if (!signer) throw new Error('signer is falsy')
 
-    const largestTurnNum = state.turnNum
+    if (!states.length) throw new Error('no states')
+    const lastState = states[states.length - 1]
+
     const whoSignedWhat = [0, 1] // TODO: make it dynamic
-    const states = [state, state] // TODO: make it dynamic
 
     console.log('Signs states using ephemeral keys of everyone')
-    const signatures = await signStates(
-      states,
-      participants.map((p) => p.ephemeral),
-      whoSignedWhat,
-    )
+    const signatures = await signStates(states, channel.wallets, whoSignedWhat)
 
     // challenger, sign last state (which it didn't sign in the previous signatures)
     const challengeSignedState: SignedState = signState(
-      states[states.length - 1],
-      participants[0].ephemeral.privateKey,
+      lastState,
+      channel.wallets[0].privateKey, // TODO: make it dynamic. use corresponding wallet from account
     )
     const challengeSignature = signChallengeMessage(
       [challengeSignedState],
-      participants[0].ephemeral.privateKey,
+      channel.wallets[0].privateKey, // TODO: make it dynamic. use corresponding wallet from account
     )
 
-    const fixedPart = getFixedPart(state)
+    const largestTurnNum = lastState.turnNum
+    const fixedPart = getFixedPart(lastState)
     const challengeTx = await nitroAdjudicatorContract
       .connect(signer)
       .challenge(
@@ -500,7 +533,7 @@ export default function Home(): JSX.Element {
     console.log('waiting for challenge tx', challengeTx.hash)
     await challengeTx.wait()
     console.log('challenge tx is done')
-  }, [account, library, nitroAdjudicatorContract, participants, signer, state])
+  }, [account, channel, library, nitroAdjudicatorContract, signer, states])
 
   const withdrawAllAssets = useCallback(async () => {
     if (!nitroAdjudicatorContract)
@@ -508,10 +541,12 @@ export default function Home(): JSX.Element {
     if (!account) throw new Error('account is falsy')
     if (!library) throw new Error('library is falsy')
     if (!channelId) throw new Error('channelId is falsy')
-    if (!state) throw new Error('state is falsy')
     if (!signer) throw new Error('signer is falsy')
 
-    const outcomeBytes = encodeOutcome(state.outcome)
+    if (!states.length) throw new Error('no states')
+    const lastState = states[states.length - 1]
+
+    const outcomeBytes = encodeOutcome(lastState.outcome)
     // const assetIndex = 0 // implies we are paying out the 0th asset
     const stateHash = HashZero // if the channel was concluded on the happy path, we can use this default value
     // const indices: BigNumberish[] = [] // this magic value (a zero length array) implies we want to pay out all of the allocationItems
@@ -532,7 +567,7 @@ export default function Home(): JSX.Element {
     library,
     nitroAdjudicatorContract,
     signer,
-    state,
+    states,
   ])
 
   return (
@@ -572,34 +607,37 @@ export default function Home(): JSX.Element {
           )}
         </div>
 
-        {account && state.channel && (
-          <div>
-            <h2>Channel</h2>
-            <p>Id: {channelId}</p>
-            <pre>{JSON.stringify(state.channel, null, 4)}</pre>
-            <p>
-              The channel currently holds: {formatUnits(holdings || '0')}{' '}
-              <button
-                type="button"
-                onClick={() => fetchHoldings()}
-                style={{ cursor: 'pointer' }}
-              >
-                Refresh
-              </button>
-            </p>
+        <div>
+          <h2>Channel</h2>
+          <p>Id: {channelId}</p>
+          <pre>{JSON.stringify(channel, null, 4)}</pre>
+          <p>
+            The channel currently holds: {formatUnits(holdings || '0')}{' '}
+            <button
+              type="button"
+              onClick={() => fetchHoldings()}
+              style={{ cursor: 'pointer' }}
+            >
+              Refresh
+            </button>
+          </p>
+          <p>
+            The state mode is {channelMode}{' '}
+            <button
+              type="button"
+              onClick={() => fetchChannelMode()}
+              style={{ cursor: 'pointer' }}
+            >
+              Refresh
+            </button>
+          </p>
+          <p>
             <button
               type="button"
               onClick={() => addNewParticipant()}
               style={{ cursor: 'pointer' }}
             >
               Add a new participant
-            </button>{' '}
-            <button
-              type="button"
-              onClick={() => deposit()}
-              style={{ cursor: 'pointer' }}
-            >
-              Deposit
             </button>{' '}
             <button
               type="button"
@@ -614,28 +652,29 @@ export default function Home(): JSX.Element {
               style={{ cursor: 'pointer' }}
             >
               Increase nonce
-            </button>
-          </div>
-        )}
+            </button>{' '}
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'init', channel })}
+              style={{ cursor: 'pointer' }}
+            >
+              Init first state
+            </button>{' '}
+          </p>
+        </div>
 
-        {account && (
-          <div>
-            <h2>State</h2>
-
-            <pre>{JSON.stringify(state, null, 4)}</pre>
-
+        <div>
+          <h2>States</h2>
+          <pre>{JSON.stringify(states, null, 4)}</pre>
+          {states.length > 0 && (
             <p>
-              The state mode is {channelMode}{' '}
               <button
                 type="button"
-                onClick={() => fetchChannelMode()}
+                onClick={() => deposit()}
                 style={{ cursor: 'pointer' }}
               >
-                Refresh
-              </button>
-            </p>
-
-            <p>
+                Deposit
+              </button>{' '}
               <button
                 type="button"
                 onClick={() => transferToOther()}
@@ -679,8 +718,8 @@ export default function Home(): JSX.Element {
                 Challenge
               </button>{' '}
             </p>
-          </div>
-        )}
+          )}
+        </div>
       </main>
     </>
   )
