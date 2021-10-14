@@ -8,6 +8,7 @@ import { Wallet } from '@ethersproject/wallet'
 import {
   AllocationAssetOutcome,
   Channel,
+  channelDataToStatus,
   encodeOutcome,
   getChannelId,
   getChannelMode,
@@ -15,11 +16,13 @@ import {
   getVariablePart,
   hashAppPart,
   hashOutcome,
+  hashState,
   signChallengeMessage,
   signState,
   State,
 } from '@statechannels/nitro-protocol'
 import { abi as NitroAdjudicatorContractAbi } from '@statechannels/nitro-protocol/lib/artifacts/contracts/NitroAdjudicator.sol/NitroAdjudicator.json'
+import { parseStatus } from '@statechannels/nitro-protocol/lib/src/contract/channel-storage'
 import { Address } from '@statechannels/nitro-protocol/lib/src/contract/types'
 import { MAGIC_ADDRESS_INDICATING_ETH } from '@statechannels/nitro-protocol/lib/src/transactions'
 import { useWeb3React } from '@web3-react/core'
@@ -395,9 +398,10 @@ export default function Home(): JSX.Element {
     if (!channelId) return
     void nitroAdjudicatorContract
       .unpackStatus(channelId)
-      .then((status) =>
-        getChannelMode(status.finalizesAt, Math.floor(Date.now() / 1000)),
-      )
+      .then((status) => {
+        console.log('fingerprint', status.fingerprint.toHexString())
+        return getChannelMode(status.finalizesAt, Math.floor(Date.now() / 1000))
+      })
       .then(setChannelMode)
       .catch((error) =>
         console.warn(
@@ -407,6 +411,17 @@ export default function Home(): JSX.Element {
       )
   }, [channelId, nitroAdjudicatorContract])
   useEffect(() => fetchChannelMode(), [fetchChannelMode])
+
+  const channelStatus = useMemo(() => {
+    if (!states.length) return
+    const lastState = states[states.length - 1]
+    return channelDataToStatus({
+      turnNumRecord: lastState.turnNum,
+      finalizesAt: Math.floor(Date.now() / 1000),
+      state: lastState,
+      outcome: lastState.outcome,
+    })
+  }, [states])
 
   const [holdings, setHoldings] = useState<BigNumber>()
   const fetchHoldings = useCallback(() => {
@@ -620,7 +635,13 @@ export default function Home(): JSX.Element {
 
     const outcomeBytes = encodeOutcome(lastState.outcome)
     // const assetIndex = 0 // implies we are paying out the 0th asset
-    const stateHash = HashZero // if the channel was concluded on the happy path, we can use this default value
+
+
+    let stateHash = hashState(lastState)
+    if (lastState.isFinal && lastState.signatures.length === lastState.channel.participants.length) {
+      stateHash = HashZero // if the channel was concluded on the happy path, we can use this default value
+    }
+
     // const indices: BigNumberish[] = [] // this magic value (a zero length array) implies we want to pay out all of the allocationItems
     const withdrawAllAssetsTx = await nitroAdjudicatorContract
       .connect(signer)
@@ -683,6 +704,9 @@ export default function Home(): JSX.Element {
           <h2>Channel</h2>
           <p>Id: {channelId}</p>
           <pre>{JSON.stringify(channel, null, 4)}</pre>
+          {channelStatus && (
+            <pre>{JSON.stringify(parseStatus(channelStatus), null, 4)}</pre>
+          )}
           <p>
             The channel currently holds: {formatUnits(holdings || '0')}{' '}
             <button
