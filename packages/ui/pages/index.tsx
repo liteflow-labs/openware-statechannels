@@ -159,40 +159,95 @@ export default function Home(): JSX.Element {
         <div>
           <h2>States</h2>
           <pre>{JSON.stringify(states, null, 4)}</pre>
+
+          {states.length > 0 &&
+            channel.wallets.map((wallet, index) => {
+              const turnNum = states[states.length - 1].turnNum
+              const moverIndex = turnNum % channel.accounts.length
+              const isSignerCurrentUser = account === channel.accounts[index]
+              const canPlay = moverIndex !== index // can play if it's not the last to have played
+              const participant = channel.accounts[index]
+              return (
+                <p key={wallet.address}>
+                  Action for participant {participant}:{' '}
+                  <button
+                    type="button"
+                    disabled={!isSignerCurrentUser && !canPlay}
+                    onClick={async () => {
+                      const amountString = window.prompt(
+                        'How many ETH to deposit?',
+                        '1',
+                      )
+                      if (!amountString) return
+                      const amount = parseUnits(amountString, 'ether')
+                      await deposit(signer, channelId, channelHoldings, amount)
+                      fetchChannelHoldings()
+                      fetchBalance()
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    Deposit
+                  </button>{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const amountString = window.prompt(
+                        'How many ETH to transfer?',
+                        '1',
+                      )
+                      if (!amountString) return
+                      const amount = parseUnits(amountString, 'ether')
+                      transferToOther(participant, amount)
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    Transfer to other
+                  </button>{' '}
+                  <button
+                    type="button"
+                    disabled={canPlay}
+                    onClick={() => {
+                      dispatchStates({
+                        type: 'signLastState',
+                        walletIndex: index,
+                        wallet: wallet,
+                      })
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    Sign state
+                  </button>{' '}
+                  <button
+                    type="button"
+                    disabled={!isSignerCurrentUser}
+                    onClick={() => {
+                      dispatchStates({
+                        type: 'signLastState',
+                        walletIndex: index,
+                        wallet: wallet,
+                      }) // FIXME: may need to add a delay
+                      void conclude(signer)
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    Sign & Conclude
+                  </button>{' '}
+                  <button
+                    type="button"
+                    disabled={!isSignerCurrentUser}
+                    onClick={() => {
+                      void challenge(wallet, signer)
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    Challenge
+                  </button>{' '}
+                </p>
+              )
+            })}
+
           {states.length > 0 && (
             <p>
-              <button
-                type="button"
-                onClick={async () => {
-                  const amountString = window.prompt(
-                    'How many ETH to deposit?',
-                    '1',
-                  )
-                  if (!amountString) return
-                  const amount = parseUnits(amountString, 'ether')
-                  await deposit(signer, channelId, channelHoldings, amount)
-                  fetchChannelHoldings()
-                  fetchBalance()
-                }}
-                style={{ cursor: 'pointer' }}
-              >
-                Deposit
-              </button>{' '}
-              <button
-                type="button"
-                onClick={() => {
-                  const amountString = window.prompt(
-                    'How many ETH to transfer?',
-                    '1',
-                  )
-                  if (!amountString) return
-                  const amount = parseUnits(amountString, 'ether')
-                  transferToOther(account, amount)
-                }}
-                style={{ cursor: 'pointer' }}
-              >
-                Transfer to other
-              </button>{' '}
               <button
                 type="button"
                 onClick={() => dispatchStates({ type: 'copyLastState' })}
@@ -206,47 +261,6 @@ export default function Home(): JSX.Element {
                 style={{ cursor: 'pointer' }}
               >
                 Finalize
-              </button>{' '}
-              <button
-                type="button"
-                onClick={() => {
-                  const walletString = window.prompt(
-                    'Index of wallet to use to sign:',
-                    '0',
-                  )
-                  if (!walletString) return
-                  const walletIndex = Number.parseInt(walletString)
-                  dispatchStates({
-                    type: 'signLastState',
-                    walletIndex: walletIndex,
-                    wallet: channel.wallets[walletIndex],
-                  })
-                }}
-                style={{ cursor: 'pointer' }}
-              >
-                Sign state
-              </button>{' '}
-              <button
-                type="button"
-                onClick={() => conclude(signer)}
-                style={{ cursor: 'pointer' }}
-              >
-                Conclude
-              </button>{' '}
-              <button
-                type="button"
-                onClick={() => {
-                  const walletString = window.prompt(
-                    'Index of wallet to use to challenge:',
-                    '0',
-                  )
-                  if (!walletString) return
-                  const walletIndex = Number.parseInt(walletString)
-                  void challenge(channel.wallets[walletIndex], signer)
-                }}
-                style={{ cursor: 'pointer' }}
-              >
-                Challenge
               </button>{' '}
             </p>
           )}
